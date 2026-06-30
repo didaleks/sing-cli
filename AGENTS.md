@@ -1,0 +1,132 @@
+# sing — CLI поверх Singularity API (база знаний для агентов)
+
+Это самодостаточный инструмент. Любой агент, попавший в эту директорию, может разобраться и
+пользоваться им, **не читая другие репозитории**. Канон правил API и справочник команд — здесь.
+
+## Что это и зачем
+
+`sing` — тонкий Node.js CLI поверх [Singularity](https://api.singularity-app.com) API.
+
+Проблема, которую он решает: MCP-сервер Singularity на чтении возвращает полные объекты задач
+(`listTasks` — это ~600+ задач целиком в JSON), что мгновенно жжёт контекст агента. `sing` ходит в
+тот же API live, но печатает в stdout **только компактную проекцию** нужных полей (или метрики).
+Сырой полный дамп выгружается опционально в файл (`--out`) для `jq`, не в контекст.
+
+Поэтому правило: **чтение, метрики и циклы — через `sing`; MCP — запасной путь и операции без
+CLI-обёртки** (привычки, kanban, time-stat, удаление, заметки в Delta-формате).
+
+Команды записи (`done`/`rename`/`move`/`bucket`/`archive`/`checklist`/`deadline`/`tag-swap`/`note`/
+`create`) делают **верификацию-эхо**: после записи перечитывают задачу и печатают «было → стало» /
+итог, не вываливая полный объект.
+
+## Установка
+
+```sh
+git clone <repo> sing && cd sing && npm install   # единственная внешняя зависимость — axios@1.10.0
+```
+
+Требуется Node ≥ 18 (нужен полный ICU для `Intl` с таймзоной `Europe/Moscow` — расчёт GMT+3).
+
+## Запуск
+
+```sh
+./sing <cmd>                      # bash-обёртка (находит sing.js рядом)
+node ./sing.js <cmd>              # напрямую
+./sing help                       # полный список команд и флагов
+```
+
+Из других директорий/проектов — по абсолютному пути или через тонкий shim (см. «Переиспользование»).
+
+## Аутентификация
+
+1. Переменные окружения `SINGULARITY_ACCESS_TOKEN` (+ опц. `SINGULARITY_BASE_URL`), если заданы.
+2. Иначе — парсинг `~/.claude.json`: берутся аргументы запуска MCP-сервера `singularity`
+   (`--accessToken`, `--baseUrl`). Это home-путь, работает из любой рабочей директории.
+
+База по умолчанию: `https://api.singularity-app.com`. **Токен НИКОГДА не печатается** в stdout/stderr.
+
+## Справочник команд
+
+### Чтение
+| Команда | Назначение |
+|---|---|
+| `sing tasks [--project ID] [--tag NAME] [--no-reference] [--active] [--candidate] [--deferred true\|false] [--inbox] [--done\|--all] [--format jsonl\|tsv\|count\|json] [--fields a,b,c] [--tag-ids] [--out FILE]` | Список задач, компактная проекция |
+| `sing task <id> [--json]` | Одна задача (полный объект — `--json`) |
+| `sing projects [--format ...] [--out FILE]` | Проекты (порядок/иерархия) |
+| `sing tags` | Теги |
+| `sing metrics [--json] [--done\|--all]` | Метрики нагрузки + backpressure (review/research) |
+
+Фильтры: `--active` = не reference и не deferred; `--candidate` = active без тегов `Waiting`/`Мозгоштурм`.
+По умолчанию `tasks`/`metrics` **скрывают выполненные/архивные** (`--done`/`--all` — показать вместе).
+
+«Reference» — пользовательская семантика «справочных» проектов (не баг-трекер задач, а
+библиотека/архив). В Singularity этой пометки нет, поэтому она настраивается через env (по умолчанию
+**пусто** — никакой проект не reference):
+- `SINGULARITY_REFERENCE_SPHERE=P-…` — id проекта-сферы; все проекты под ней считаются reference;
+- `SINGULARITY_REFERENCE_PROJECTS=P-…,P-…` — либо явный список id через запятую.
+
+Влияет на `--no-reference`/`--active`/`--candidate` и на метрику `reference`. Без настройки эти фильтры
+никого не отсеивают, а `reference` в `metrics` = 0.
+
+### Запись (каждая — верификация-эхо перечиткой)
+| Команда | Назначение |
+|---|---|
+| `sing tag-swap <id> --add NAME --remove NAME` | Атомарный свап тегов + верификация |
+| `sing note <id> (--html '…' \| --file PATH)` | Записать заметку / DECISION-BRIEF |
+| `sing create --title '…' [--project ID] [--tags A,B] [--note '…']` | Создать задачу |
+| `sing done <id…>` | Закрыть + убрать из активных (`complete`+`deleteDate`); батч; идемпотентно |
+| `sing rename <id> "новое название"` | Переписать заголовок |
+| `sing move <id…> --project ID\|имя` | Сменить проект; батч |
+| `sing bucket <id…> --today\|--week\|--none` | Коробочка дат (см. ниже); батч |
+| `sing archive <id…>` | Убрать из активных без «выполнено» (stale); только `deleteDate`; батч |
+| `sing checklist <id> --add "шаг"` | Добавить пункт чеклиста |
+| `sing deadline <id> --date YYYY-MM-DD` | Дедлайн |
+| `sing project-rename <id\|имя> "новое имя"` | Переименовать проект (меняет имя, не ID) |
+| `sing project-create --title '...' [--parent ID\|имя]` | Создать проект (опц. под родителем) |
+
+Батч (`done`/`move`/`bucket`/`archive`): id — аргументами **или** через stdin (whitespace/newline);
+частичный сбой не прерывает остальные, в конце печатается `итого: ok=N fail=N`.
+
+## Правила API (канон)
+
+- **Часовой пояс — GMT+3.** День `D` хранится как `(D-1)T21:00:00.000Z` (полночь GMT+3 в UTC).
+  Напр. дедлайн `2026-06-30` → `2026-06-29T21:00:00.000Z`.
+- **Механика «выполнено = архив»:** `done` шлёт `{complete:1, completeLast, deleteDate}` — задача
+  уходит из активных списков (как ручная отметка «выполнено»), `getTask` продолжает работать.
+  `archive` шлёт только `deleteDate` (без `complete`). Поля `archived`/`removed` API **молча
+  игнорирует** — не использовать. Снятие `start` — значением `null`.
+- **Скрытие выполненных:** `complete:1` сам по себе НЕ убирает задачу из дефолтного `listTasks` API
+  (известный баг) — CLI фильтрует на своей стороне; `--done`/`--all` поднимают
+  `includeRemoved`/`includeArchived`, чтобы показать архив.
+- **Коробочки дат:** `--today` → `{start: сегодня GMT+3, deferred:false}`; `--week` →
+  `{start:null, deferred:true}`; `--none` → `{start:null, deferred:false}`.
+- **Заметки — формат Delta:** массив операций `[{insert:"…\n"}, …]` БЕЗ обёртки `{"ops":[…]}`;
+  последний `insert` всегда заканчивается `\n`. (`sing note --html` принимает HTML и сам конвертит.)
+- **cwd-семантика:** `--out FILE` (дамп) и `note --file PATH` резолвятся относительно **текущей
+  рабочей директории вызова**, не относительно каталога установки `sing`. Это намеренно — звать из той
+  папки, куда нужен файл.
+- **Merge дублей** CLI-командой не делается (в API нет слияния): скопировать контекст в задачу-канон
+  (`sing note`), затем `sing done`/`sing archive` дубликат.
+
+## Переиспользование из других проектов
+
+- Канон — звать инструмент по абсолютному пути: `/путь/к/sing/sing <cmd>`.
+- Для локального `./bin/sing` в проекте — тонкий shim:
+  ```bash
+  #!/usr/bin/env bash
+  exec node "/путь/к/sing/sing.js" "$@"
+  ```
+
+## Сопровождение
+
+- `client.js` и `utils/auth.js` — **вендорённые** файлы официального MCP-сервера Singularity
+  (`singularity-mcp-server`, лицензия MIT). В шапке каждого — строка `COPIED FROM … @ дата`; правда об
+  API живёт там, поэтому **не редактировать вручную** — при обновлении upstream перекопировать и вернуть
+  строку-стамп. `axios` запиннен в `package.json` ровно на `1.10.0` — на ту же версию, что в upstream,
+  чтобы рантайм не разошёлся. Лицензия и атрибуция — в [LICENSE](LICENSE).
+- `node_modules/` и `tmp/` — в `.gitignore`, не коммитятся.
+- Reference-проекты задаются через env (`SINGULARITY_REFERENCE_SPHERE` /
+  `SINGULARITY_REFERENCE_PROJECTS`) — в коде нет захардкоженных ID конкретного аккаунта.
+- Тесты: `npm test` (или `node sing.test.js`) — чистые хелперы (даты/предикаты/resolveProject/
+  referenceProjectIds), без сети. Требуют установленного axios (`sing.js` тянет `client.js` на верхнем
+  уровне).

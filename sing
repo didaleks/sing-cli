@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Тонкий launcher CLI Singularity. Реальная логика — sing.js рядом;
+# рантайм (client.js + utils/auth.js + node_modules/axios) лежит в этой же директории. См. AGENTS.md.
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec node "$here/sing.js" "$@"

@@ -1,0 +1,59 @@
+#!/usr/bin/env node
+"use strict";
+/**
+ * Лёгкие ассерты на чистые хелперы sing.js (без сети). Запуск: `node sing.test.js` (или `npm test`).
+ * Сетевые команды проверяются E2E против живого API.
+ */
+
+const h = require("./sing.js"); // экспортируется только при require (не при запуске как CLI)
+
+let passed = 0, failed = 0;
+function eq(actual, expected, msg) {
+  const a = JSON.stringify(actual), e = JSON.stringify(expected);
+  if (a === e) { passed++; }
+  else { failed++; console.error(`FAIL: ${msg}\n  ожидалось: ${e}\n  получено:  ${a}`); }
+}
+function ok(cond, msg) { if (cond) passed++; else { failed++; console.error(`FAIL: ${msg}`); } }
+
+// --- даты GMT+3 ---
+// День D в GMT+3 хранится как (D-1)T21:00:00.000Z.
+eq(h.dateToGMT3Iso("2026-06-30"), "2026-06-29T21:00:00.000Z", "dateToGMT3Iso 2026-06-30");
+eq(h.dateToGMT3Iso("2026-01-01"), "2025-12-31T21:00:00.000Z", "dateToGMT3Iso рубеж года");
+ok(/^\d{4}-\d{2}-\d{2}T21:00:00\.000Z$/.test(h.todayGMT3Iso()), "todayGMT3Iso формат полночи GMT+3");
+ok(h.dateToGMT3Iso("плохая дата") === null, "dateToGMT3Iso невалидный формат → null");
+
+// --- предикаты ---
+ok(h.isDone({ complete: 1 }) === true, "isDone complete:1");
+ok(h.isDone({ deleteDate: "2026-06-19T00:00:00.000Z" }) === true, "isDone deleteDate");
+ok(h.isDone({ state: 1 }) === false, "isDone обычная активная (state:1) → false");
+ok(h.isDone({}) === false, "isDone пустая → false");
+ok(h.isActive({ state: 1 }) === true, "isActive активная");
+ok(h.isActive({ complete: 1 }) === false, "isActive выполненная → false");
+ok(h.isArchived({ deleteDate: "x" }) === true, "isArchived deleteDate");
+ok(h.isArchived({ complete: 1 }) === false, "isArchived complete без deleteDate → false");
+
+// --- resolveProject ---
+const pm = { nameToId: new Map([["Проект А", "P-aaaa0001"]]), idToName: new Map() };
+eq(h.resolveProject("P-aaaa0001", pm), "P-aaaa0001", "resolveProject принимает P-id как есть");
+eq(h.resolveProject("Проект А", pm), "P-aaaa0001", "resolveProject имя→id");
+ok(h.resolveProjectSafe("Несуществующий", pm) === null, "resolveProjectSafe мусор → null");
+
+// --- referenceProjectIds (настраиваемый reference-конфиг) ---
+const projs = [{ id: "P-sphere" }, { id: "P-child", parent: "P-sphere" }, { id: "P-other" }];
+const refBySphere = h.referenceProjectIds(projs, { sphere: "P-sphere", fallback: [] });
+ok(refBySphere.has("P-sphere") && refBySphere.has("P-child") && !refBySphere.has("P-other"),
+  "referenceProjectIds: сфера и её потомки → reference, прочее → нет");
+const refByList = h.referenceProjectIds(projs, { sphere: null, fallback: ["P-other"] });
+ok(refByList.has("P-other") && !refByList.has("P-sphere"),
+  "referenceProjectIds: при пустой сфере — только явный список");
+ok(h.referenceProjectIds(projs, { sphere: null, fallback: [] }).size === 0,
+  "referenceProjectIds: нейтральный дефолт (ничего не задано) → пусто");
+
+// --- patch-конструкторы ---
+const dp = h.DONE_PATCH();
+ok(dp.complete === 1 && typeof dp.completeLast === "string" && typeof dp.deleteDate === "string", "DONE_PATCH поля");
+const ap = h.ARCHIVE_PATCH();
+ok(ap.deleteDate && ap.complete === undefined, "ARCHIVE_PATCH только deleteDate, без complete");
+
+console.log(`\n${passed} passed, ${failed} failed`);
+process.exit(failed ? 1 : 0);
