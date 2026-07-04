@@ -242,6 +242,44 @@ function resolveProject(v, pm) {
   return id;
 }
 
+// --------------------------- task groups (секции) ---------------------------
+// У каждого проекта есть ровно одна fake-группа (дефолтная псевдо-секция, куда клиент кладёт задачи
+// «без секции»). Плюс могут быть реальные именованные секции. Задача с group=null или ссылкой на
+// удалённую/чужую секцию выпадает из проекта в клиентский список «без проекта».
+// listTaskGroups фильтр projectId игнорирует (отдаёт все) — фильтруем по g.parent на клиенте.
+const getGroups = async (c) => asArray(await c.listTaskGroups({}), "taskGroups");
+
+// Дефолтная секция проекта: fake-группа; если её нет — верхняя реальная секция; нет групп → null.
+function defaultGroupId(groups, projectId) {
+  const mine = groups.filter((g) => g.parent === projectId);
+  if (!mine.length) return null;
+  const fake = mine.find((g) => g.fake);
+  if (fake) return fake.id;
+  return mine.slice().sort((a, b) => (a.parentOrder || 0) - (b.parentOrder || 0))[0].id;
+}
+
+// Карта projectId → Set(валидных group id) — чтобы отличить «битую» ссылку от валидной секции.
+function groupsByProject(groups) {
+  const m = new Map();
+  for (const g of groups) {
+    if (!g.parent) continue;
+    if (!m.has(g.parent)) m.set(g.parent, new Set());
+    m.get(g.parent).add(g.id);
+  }
+  return m;
+}
+
+// Задача-сирота внутри проекта: есть projectId с известными группами, но group отсутствует или
+// указывает на секцию не из этого проекта (удалённую/чужую). Без projectId — не наш случай (нечем
+// чинить группой). Проект с неизвестными группами — тоже пропускаем (нет цели).
+function needsGroupHeal(task, validByProject) {
+  if (!task || !task.projectId) return false;
+  const valid = validByProject.get(task.projectId);
+  if (!valid || valid.size === 0) return false;
+  if (!task.group) return true;
+  return !valid.has(task.group);
+}
+
 // id из positional или из stdin (whitespace/newline). Пусто → fail.
 function resolveIds(positional) {
   if (positional && positional.length) return positional;
@@ -456,19 +494,64 @@ async function cmdRename(positional) {
 }
 
 // move — сменить проект (батч). --project принимает P-id или имя.
+// Всегда привязывает задачу к секции целевого проекта (--section по имени, иначе дефолтная fake-
+// секция) — иначе задача осиротеет (group от старого проекта невалиден → выпадет в «без проекта»).
 async function cmdMove(positional, flags) {
-  if (!flags.project || flags.project === true) fail("usage: sing move <id...> --project ID|имя");
+  if (!flags.project || flags.project === true) fail("usage: sing move <id...> --project ID|имя [--section NAME]");
   const c = client();
   const ids = resolveIds(positional);
-  const pm = await projectMaps(c);
+  const [pm, groups] = await Promise.all([projectMaps(c), getGroups(c)]);
   const projectId = resolveProject(flags.project, pm); // fail-fast до записи, если проект неизвестен
+  let targetGroup = defaultGroupId(groups, projectId);
+  if (flags.section && flags.section !== true) {
+    const wanted = String(flags.section);
+    const sec = groups.find((g) => g.parent === projectId && name(g) === wanted);
+    if (!sec) fail(`секция «${wanted}» не найдена в проекте ${projectId}`);
+    targetGroup = sec.id;
+  }
   await runBatch(ids, async (id) => {
     const before = await c.getTask(id);
-    await c.updateTask({ id, projectId });
+    const patch = { id, projectId };
+    if (targetGroup) patch.group = targetGroup; // не осиротить: привязать к секции целевого проекта
+    await c.updateTask(patch);
     const after = await c.getTask(id);
     const from = pm.idToName.get(before.projectId) || before.projectId || "Входящие";
     const to = pm.idToName.get(after.projectId) || after.projectId;
-    process.stdout.write(`move ${id} "${name(after) || ""}": ${from} → ${to}\n`);
+    const sect = targetGroup ? ` [секция ${after.group === targetGroup ? "ok" : "⚠"}]` : " [секций нет]";
+    process.stdout.write(`move ${id} "${name(after) || ""}": ${from} → ${to}${sect}\n`);
+  });
+}
+
+// heal-groups — привязать задачи-сироты (group=null или битая ссылка) к дефолтной секции их проекта,
+// чтобы они перестали выпадать в «без проекта». --dry только показывает; --project ограничивает.
+async function cmdHealGroups(flags) {
+  const c = client();
+  const [tasks, groups, pm] = await Promise.all([getTasks(c, {}), getGroups(c), projectMaps(c)]);
+  const validByProject = groupsByProject(groups);
+  let orphans = tasks.filter(isActive).filter((t) => needsGroupHeal(t, validByProject));
+  if (flags.project && flags.project !== true) {
+    const pid = resolveProject(flags.project, pm);
+    orphans = orphans.filter((t) => t.projectId === pid);
+  }
+  if (!orphans.length) { process.stdout.write("heal-groups: задач-сирот не найдено ✓\n"); return; }
+  if (flags.dry) {
+    process.stdout.write(`heal-groups --dry: ${orphans.length} задач-сирот (ничего не пишу):\n`);
+    for (const t of orphans) {
+      const proj = pm.idToName.get(t.projectId) || t.projectId;
+      const target = defaultGroupId(groups, t.projectId);
+      process.stdout.write(`  ${t.id} "${(t.title || "").slice(0, 45)}" — ${proj} → ${target || "нет секции ⚠"}\n`);
+    }
+    process.stdout.write(`итого сирот: ${orphans.length}\n`);
+    return;
+  }
+  await runBatch(orphans.map((t) => t.id), async (id) => {
+    const before = await c.getTask(id);
+    const target = defaultGroupId(groups, before.projectId);
+    if (!target) { process.stdout.write(`heal ${id} "${name(before) || ""}" — у проекта нет секций, пропуск\n`); return; }
+    await c.updateTask({ id, group: target });
+    const after = await c.getTask(id);
+    const mark = after.group === target ? "ok" : "⚠ не подтверждено";
+    process.stdout.write(`heal ${id} "${name(after) || ""}": group → ${target} [${mark}]\n`);
   });
 }
 
@@ -582,7 +665,8 @@ function usage() {
   sing create --title '...' [--project ID] [--tags A,B] [--note '...']
   sing done <id...>                             # закрыть + убрать из активных (complete+deleteDate); идемпотентно
   sing rename <id> "новое название"             # переписать заголовок (монки-формат)
-  sing move <id...> --project ID|имя            # сменить проект
+  sing move <id...> --project ID|имя [--section NAME]  # сменить проект (+ привязать к секции; дефолт — не осиротить)
+  sing heal-groups [--project ID|имя] [--dry]   # привязать сирот (group=null/битая) к дефолтной секции проекта
   sing bucket <id...> --today|--week|--none      # коробочка дат (today=start сегодня GMT+3, week=deferred, none=снять обе)
   sing archive <id...>                          # убрать из активных без «выполнено» (разбор stale)
   sing checklist <id> --add "шаг"               # пункт чеклиста (декомпозиция)
@@ -621,6 +705,7 @@ async function main() {
     case "done": return cmdDone(positional);
     case "rename": return cmdRename(positional);
     case "move": return cmdMove(positional, flags);
+    case "heal-groups": return cmdHealGroups(flags);
     case "bucket": return cmdBucket(positional, flags);
     case "archive": return cmdArchive(positional);
     case "checklist": return cmdChecklist(positional, flags);
@@ -646,5 +731,6 @@ if (require.main === module) {
     nowIso, DONE_PATCH, ARCHIVE_PATCH, isArchived, isDone, isActive,
     dateToGMT3Iso, todayGMT3Iso, resolveProject, resolveProjectSafe,
     parseArgs, flagList, referenceProjectIds, referenceConfig,
+    defaultGroupId, groupsByProject, needsGroupHeal,
   };
 }

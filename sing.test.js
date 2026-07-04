@@ -49,6 +49,33 @@ ok(refByList.has("P-other") && !refByList.has("P-sphere"),
 ok(h.referenceProjectIds(projs, { sphere: null, fallback: [] }).size === 0,
   "referenceProjectIds: нейтральный дефолт (ничего не задано) → пусто");
 
+// --- defaultGroupId (дефолтная секция проекта) ---
+// У каждого проекта есть ровно одна fake-группа (дефолтная псевдо-секция). Плюс могут быть
+// реальные именованные секции. Задача без валидной группы падает в «без проекта».
+const grps = [
+  { id: "Q-fakeA", parent: "P-a", fake: true, parentOrder: 0 },
+  { id: "Q-secA1", parent: "P-a", title: "Заказать", parentOrder: 50 },
+  { id: "Q-secA2", parent: "P-a", title: "Жду", parentOrder: 125 },
+  { id: "Q-fakeB", parent: "P-b", fake: true },
+  { id: "Q-secC1", parent: "P-c", title: "Только реальная", parentOrder: 30 },
+];
+eq(h.defaultGroupId(grps, "P-a"), "Q-fakeA", "defaultGroupId: fake-группа при наличии секций");
+eq(h.defaultGroupId(grps, "P-b"), "Q-fakeB", "defaultGroupId: единственная fake-группа");
+eq(h.defaultGroupId(grps, "P-c"), "Q-secC1", "defaultGroupId: fallback на верхнюю секцию, если fake нет");
+ok(h.defaultGroupId(grps, "P-unknown") === null, "defaultGroupId: нет групп проекта → null");
+
+// --- needsGroupHeal (задача-сирота внутри проекта: group=null или битая ссылка) ---
+const validByProj = new Map([
+  ["P-a", new Set(["Q-fakeA", "Q-secA1", "Q-secA2"])],
+  ["P-b", new Set(["Q-fakeB"])],
+]);
+ok(h.needsGroupHeal({ projectId: "P-a", group: null }, validByProj) === true, "needsGroupHeal: group=null → чинить");
+ok(h.needsGroupHeal({ projectId: "P-a", group: "Q-deleted" }, validByProj) === true, "needsGroupHeal: битая ссылка на удалённую секцию → чинить");
+ok(h.needsGroupHeal({ projectId: "P-a", group: "Q-secA1" }, validByProj) === false, "needsGroupHeal: валидная секция → не трогать");
+ok(h.needsGroupHeal({ projectId: "P-b", group: "Q-fakeB" }, validByProj) === false, "needsGroupHeal: fake-группа валидна → не трогать");
+ok(h.needsGroupHeal({ projectId: null, group: null }, validByProj) === false, "needsGroupHeal: задача без проекта — не наш случай (не чинить группой)");
+ok(h.needsGroupHeal({ projectId: "P-unknown", group: null }, validByProj) === false, "needsGroupHeal: проект без известных групп → не чинить (нечем)");
+
 // --- patch-конструкторы ---
 const dp = h.DONE_PATCH();
 ok(dp.complete === 1 && typeof dp.completeLast === "string" && typeof dp.deleteDate === "string", "DONE_PATCH поля");
