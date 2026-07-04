@@ -456,7 +456,13 @@ async function cmdCreate(flags) {
   if (!flags.title || flags.title === true) fail("usage: sing create --title '...' [--project ID] [--tags A,B] [--note '...']");
   const c = client();
   const task = { title: String(flags.title) };
-  if (flags.project) task.projectId = String(flags.project);
+  if (flags.project && flags.project !== true) {
+    const pm = await projectMaps(c);
+    task.projectId = resolveProject(flags.project, pm); // принимает P-id ИЛИ имя (fail-fast, как move)
+    // Привязать к секции проекта — иначе новая задача осиротеет (выпадет в «без проекта»).
+    const targetGroup = defaultGroupId(await getGroups(c), task.projectId);
+    if (targetGroup) task.group = targetGroup;
+  }
   if (flags.note && flags.note !== true) task.note = String(flags.note);
   if (flags.tags) {
     const tm = await tagMaps(c);
