@@ -76,6 +76,15 @@ ok(h.needsGroupHeal({ projectId: "P-b", group: "Q-fakeB" }, validByProj) === fal
 ok(h.needsGroupHeal({ projectId: null, group: null }, validByProj) === false, "needsGroupHeal: задача без проекта — не наш случай (не чинить группой)");
 ok(h.needsGroupHeal({ projectId: "P-unknown", group: null }, validByProj) === false, "needsGroupHeal: проект без известных групп → не чинить (нечем)");
 
+// --- isInboxTask (истинный инбокс: без проекта И без коробочки-даты) ---
+// Владелец ловит задачи «без проекта и без даты» — они по умолчанию падают в инбокс. Как только
+// задаче назначили проект ИЛИ дату (start/deferred) — она разобрана и из инбокса уходит.
+ok(h.isInboxTask({ projectId: null, start: null, deferred: null }) === true, "isInboxTask: без проекта и даты → да");
+ok(h.isInboxTask({ projectId: "", start: null, deferred: false }) === true, "isInboxTask: пустой projectId → да");
+ok(h.isInboxTask({ projectId: "P-a", start: null, deferred: null }) === false, "isInboxTask: есть проект → нет");
+ok(h.isInboxTask({ projectId: null, start: "2026-07-05T21:00:00.000Z", deferred: false }) === false, "isInboxTask: есть start (запланирована) → нет");
+ok(h.isInboxTask({ projectId: null, start: null, deferred: true }) === false, "isInboxTask: deferred (когда-нибудь) → нет");
+
 // --- patch-конструкторы ---
 const dp = h.DONE_PATCH();
 ok(dp.complete === 1 && typeof dp.completeLast === "string" && typeof dp.deleteDate === "string", "DONE_PATCH поля");

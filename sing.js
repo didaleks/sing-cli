@@ -209,6 +209,9 @@ const ARCHIVE_PATCH = () => ({ deleteDate: nowIso() });
 const isArchived = (t) => Boolean(t && t.deleteDate);
 const isDone = (t) => Boolean(t && (t.complete || t.deleteDate));
 const isActive = (t) => !isDone(t);
+// Истинный инбокс: задача поймана «без проекта и без даты» (дефолт захвата). Назначили проект ИЛИ
+// коробочку-дату (start/deferred) → разобрана, из инбокса ушла. Это канонная выборка «Входящих».
+const isInboxTask = (t) => Boolean(t) && !t.projectId && !t.start && !t.deferred;
 
 // «День D в GMT+3» хранится как (D-1)T21:00:00.000Z. Невалидный формат → null.
 function dateToGMT3Iso(yyyymmdd) {
@@ -345,7 +348,7 @@ async function cmdTasks(flags) {
     const want = String(flags.deferred) !== "false";
     rows = rows.filter((t) => Boolean(t.deferred) === want);
   }
-  if (flags.inbox) rows = rows.filter((t) => !t.projectId);
+  if (flags.inbox) rows = rows.filter(isInboxTask); // истинный инбокс: без проекта И без даты
   if (wantTags.length) rows = rows.filter((t) => wantTags.every((id) => (t.tags || []).includes(id)));
 
   const fields = flags.fields ? flagList(flags.fields) : TASK_DEFAULT_FIELDS;
@@ -399,7 +402,7 @@ async function cmdMetrics(flags) {
   const review = live.filter((t) => has(t, "review")).length;
   const research = live.filter((t) => has(t, "research")).length;
   const decompose = live.filter((t) => has(t, "decompose")).length;
-  const inbox = live.filter((t) => !t.projectId).length;
+  const inbox = live.filter(isInboxTask).length; // без проекта И без коробочки-даты (§5)
 
   const m = {
     total, reference, deferred, activeLoad, inbox,
@@ -659,6 +662,7 @@ function usage() {
 Чтение (в stdout только проекция нужных полей; --out FILE кладёт сырой дамп для jq):
   sing tasks [--project ID] [--tag NAME] [--no-reference] [--active] [--candidate]
              [--deferred true|false] [--inbox] [--done|--all] [--format jsonl|tsv|count|json]
+             # --inbox = истинные Входящие: без проекта И без даты (start/deferred) — канонная выборка на разбор
              [--fields a,b,c] [--tag-ids] [--out FILE]
   sing task <id> [--json]
   sing projects [--format ...] [--out FILE]
@@ -737,6 +741,6 @@ if (require.main === module) {
     nowIso, DONE_PATCH, ARCHIVE_PATCH, isArchived, isDone, isActive,
     dateToGMT3Iso, todayGMT3Iso, resolveProject, resolveProjectSafe,
     parseArgs, flagList, referenceProjectIds, referenceConfig,
-    defaultGroupId, groupsByProject, needsGroupHeal,
+    defaultGroupId, groupsByProject, needsGroupHeal, isInboxTask,
   };
 }
