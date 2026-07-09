@@ -85,6 +85,17 @@ ok(h.isInboxTask({ projectId: "P-a", start: null, deferred: null }) === false, "
 ok(h.isInboxTask({ projectId: null, start: "2026-07-05T21:00:00.000Z", deferred: false }) === false, "isInboxTask: есть start (запланирована) → нет");
 ok(h.isInboxTask({ projectId: null, start: null, deferred: true }) === false, "isInboxTask: deferred (когда-нибудь) → нет");
 
+// --- reviewGuardReason (нельзя ставить review без брифа в заметке §12) ---
+// Свап на review без непустого note теряет бриф — задача уходит «на ревью» пустой.
+// Guard блокирует это (кроме --force). Note-ref "N-T-…" = бриф есть; "" = пусто.
+ok(h.reviewGuardReason({ note: "" }, ["review"], false), "reviewGuardReason: пустая заметка + review → блок");
+ok(h.reviewGuardReason({ note: "   \n " }, ["review"], false), "reviewGuardReason: whitespace-заметка + review → блок");
+ok(h.reviewGuardReason({}, ["review"], false), "reviewGuardReason: note отсутствует + review → блок");
+ok(h.reviewGuardReason({ note: "N-T-abc" }, ["review"], false) === null, "reviewGuardReason: note-ref (бриф есть) → пропуск");
+ok(h.reviewGuardReason({ note: "" }, ["research"], false) === null, "reviewGuardReason: не review в --add → пропуск");
+ok(h.reviewGuardReason({ note: "" }, [], false) === null, "reviewGuardReason: ничего не добавляем → пропуск");
+ok(h.reviewGuardReason({ note: "" }, ["review"], true) === null, "reviewGuardReason: --force снимает блок");
+
 // --- patch-конструкторы ---
 const dp = h.DONE_PATCH();
 ok(dp.complete === 1 && typeof dp.completeLast === "string" && typeof dp.deleteDate === "string", "DONE_PATCH поля");

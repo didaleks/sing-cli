@@ -74,7 +74,7 @@ node ./sing.js <cmd>              # напрямую
 ### Запись (каждая — верификация-эхо перечиткой)
 | Команда | Назначение |
 |---|---|
-| `sing tag-swap <id> --add NAME --remove NAME` | Атомарный свап тегов + верификация |
+| `sing tag-swap <id> --add NAME --remove NAME [--force]` | Атомарный свап тегов + верификация. **Guard §12:** `--add review` при пустом `note` блокируется (бриф не потеряется) — сначала `sing note`, либо `--force` |
 | `sing note <id> (--html '…' \| --file PATH)` | Записать заметку / DECISION-BRIEF |
 | `sing create --title '…' [--project ID] [--tags A,B] [--note '…']` | Создать задачу |
 | `sing done <id…>` | Закрыть + убрать из активных (`complete`+`deleteDate`); батч; идемпотентно |

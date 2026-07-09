@@ -425,14 +425,28 @@ async function cmdMetrics(flags) {
   );
 }
 
+// Guard §12: свап на review без брифа теряет бриф — задача уходит «на ревью» пустой.
+// Возвращает причину-строку (блок) или null (пропуск). note-ref "N-T-…" = бриф записан;
+// пустой/whitespace note = брифа нет. --force снимает блок для ручных исключений.
+function reviewGuardReason(task, addNames, force) {
+  if (force) return null;
+  if (!Array.isArray(addNames) || !addNames.includes("review")) return null;
+  const note = task && task.note != null ? String(task.note).trim() : "";
+  if (!note) return "нельзя ставить review без брифа: заметка задачи пуста — сначала `sing note <id> …`, либо повтори с --force";
+  return null;
+}
+
 async function cmdTagSwap(positional, flags) {
   const id = positional[0];
-  if (!id) fail("usage: sing tag-swap <id> --add NAME --remove NAME");
+  if (!id) fail("usage: sing tag-swap <id> --add NAME --remove NAME [--force]");
   const c = client();
   const tm = await tagMaps(c);
   const t = await c.getTask(id);
   const resolve = (n) => tm.nameToId.get(n) || fail(`неизвестный тег: ${n}`);
-  const add = flagList(flags.add).map(resolve);
+  const addNames = flagList(flags.add);
+  const guard = reviewGuardReason(t, addNames, flags.force);
+  if (guard) fail(guard);
+  const add = addNames.map(resolve);
   const remove = new Set(flagList(flags.remove).map(resolve));
   const next = Array.from(new Set([...(t.tags || []).filter((x) => !remove.has(x)), ...add]));
   await c.updateTask({ id, tags: next });
@@ -742,5 +756,6 @@ if (require.main === module) {
     dateToGMT3Iso, todayGMT3Iso, resolveProject, resolveProjectSafe,
     parseArgs, flagList, referenceProjectIds, referenceConfig,
     defaultGroupId, groupsByProject, needsGroupHeal, isInboxTask,
+    reviewGuardReason,
   };
 }
