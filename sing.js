@@ -408,7 +408,7 @@ async function cmdMetrics(flags) {
     total, reference, deferred, activeLoad, inbox,
     review, research, decompose,
     backpressure: {
-      reviewStock: review >= 10 ? "ALERT ≥10: не брать новые" : "ok",
+      // Лимит стока review снят 2026-07-11 — число на ревью остаётся видимой метрикой, но не блокирует подхват.
       researchInput: research > 10 ? "ALERT >10: затор на входе" : "ok",
     },
   };
@@ -419,7 +419,7 @@ async function cmdMetrics(flags) {
     `Deferred:         ${deferred}\n` +
     `Активная нагрузка: ${activeLoad}  (Всего − Reference − Deferred)\n` +
     `Входящие:         ${inbox}\n` +
-    `На ревью (review): ${review}   ${m.backpressure.reviewStock}\n` +
+    `На ревью (review): ${review}\n` +
     `research-очередь:  ${research}   ${m.backpressure.researchInput}\n` +
     `decompose:        ${decompose}\n`
   );
