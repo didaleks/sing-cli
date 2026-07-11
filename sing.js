@@ -191,6 +191,37 @@ function flagList(v) {
   return String(v).split(",").map((s) => s.trim()).filter(Boolean);
 }
 
+// Допустимые флаги по команде — для «падать на неизвестном флаге» (не молча игнорировать).
+// Команды только с позиционными аргументами — пустой список.
+const KNOWN_FLAGS = {
+  tasks: ["project", "tag", "no-reference", "active", "candidate", "next-action", "deferred", "inbox", "done", "all", "format", "fields", "tag-ids", "out", "due"],
+  task: ["json"],
+  projects: ["format", "out"],
+  tags: [],
+  metrics: ["json", "done", "all"],
+  "tag-swap": ["add", "remove", "force"],
+  note: ["html", "file"],
+  create: ["title", "project", "tags", "note"],
+  done: [],
+  rename: [],
+  move: ["project", "section"],
+  "heal-groups": ["project", "dry"],
+  bucket: ["today", "week", "none"],
+  archive: [],
+  checklist: ["add"],
+  deadline: ["date"],
+  "project-rename": [],
+  "project-create": ["title", "parent"],
+};
+// Неизвестные флаги для команды (пустой массив = всё ок). Неизвестная команда → пусто (валидируется
+// отдельно диспетчером); help/undefined тоже не валидируются.
+function unknownFlags(cmd, flags) {
+  const known = KNOWN_FLAGS[cmd];
+  if (!known) return [];
+  const set = new Set(known);
+  return Object.keys(flags).filter((k) => !set.has(k));
+}
+
 // --------------------------- write helpers ---------------------------
 
 // Поля done/archive определены спайком по живому API (см. историю):
@@ -223,6 +254,24 @@ function dateToGMT3Iso(yyyymmdd) {
 function todayGMT3Iso() {
   const ymd = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Moscow" }).format(new Date());
   return dateToGMT3Iso(ymd);
+}
+// Класс срочности задачи по локальному дню GMT+3. Окно «сегодня» D = [lower, upper) =
+// [(D-1)T21:00Z, D·T21:00Z); Москва — фиксированный UTC+3 (без DST), поэтому upper = lower + 24ч.
+// Смотрим И start, И deadline: дата в прошлом → "overdue", дата в окне сегодня → "today".
+function dueClasses(task, lowerIso, upperIso) {
+  const set = new Set();
+  for (const v of [task && task.start, task && task.deadline]) {
+    if (!v) continue;
+    if (v < lowerIso) set.add("overdue");
+    else if (v < upperIso) set.add("today");
+  }
+  return set;
+}
+// Границы окна «сегодня» в GMT+3 (не чистая — зависит от часов; в тестах dueClasses берёт границы явно).
+function todayWindowGMT3() {
+  const lower = todayGMT3Iso();
+  const upper = new Date(new Date(lower).getTime() + 86400000).toISOString();
+  return { lower, upper };
 }
 
 // Карта имя→id и id→имя по проектам (аналог tagMaps).
@@ -349,6 +398,13 @@ async function cmdTasks(flags) {
     rows = rows.filter((t) => Boolean(t.deferred) === want);
   }
   if (flags.inbox) rows = rows.filter(isInboxTask); // истинный инбокс: без проекта И без даты
+  if (flags.due) {
+    const want = flagList(flags.due);
+    const bad = want.filter((w) => w !== "today" && w !== "overdue");
+    if (bad.length) fail(`--due принимает today|overdue (можно через запятую), не: ${bad.join(", ")}`);
+    const { lower, upper } = todayWindowGMT3();
+    rows = rows.filter((t) => { const cls = dueClasses(t, lower, upper); return want.some((w) => cls.has(w)); });
+  }
   if (wantTags.length) rows = rows.filter((t) => wantTags.every((id) => (t.tags || []).includes(id)));
 
   const fields = flags.fields ? flagList(flags.fields) : TASK_DEFAULT_FIELDS;
@@ -675,9 +731,11 @@ function usage() {
 
 Чтение (в stdout только проекция нужных полей; --out FILE кладёт сырой дамп для jq):
   sing tasks [--project ID] [--tag NAME] [--no-reference] [--active] [--candidate]
-             [--deferred true|false] [--inbox] [--done|--all] [--format jsonl|tsv|count|json]
+             [--deferred true|false] [--inbox] [--due today|overdue] [--done|--all]
+             [--format jsonl|tsv|count|json] [--fields a,b,c] [--tag-ids] [--out FILE]
              # --inbox = истинные Входящие: без проекта И без даты (start/deferred) — канонная выборка на разбор
-             [--fields a,b,c] [--tag-ids] [--out FILE]
+             # --due = срочность по локальному дню GMT+3: today (start/deadline в окне сегодня),
+             #         overdue (start/deadline в прошлом). Можно вместе: --due today,overdue (фокус §8)
   sing task <id> [--json]
   sing projects [--format ...] [--out FILE]
   sing tags
@@ -717,6 +775,11 @@ async function main() {
   const argv = process.argv.slice(2);
   const cmd = argv[0];
   const { positional, flags } = parseArgs(argv.slice(1));
+  // Падать на неизвестном флаге (а не молча игнорировать — иначе агент строит выборку на мусоре).
+  if (KNOWN_FLAGS[cmd]) {
+    const bad = unknownFlags(cmd, flags);
+    if (bad.length) fail(`неизвестный флаг: ${bad.map((f) => "--" + f).join(", ")} (sing help)`);
+  }
   switch (cmd) {
     case "tasks": return cmdTasks(flags);
     case "task": return cmdTask(positional, flags);
@@ -753,8 +816,8 @@ if (require.main === module) {
 } else {
   module.exports = {
     nowIso, DONE_PATCH, ARCHIVE_PATCH, isArchived, isDone, isActive,
-    dateToGMT3Iso, todayGMT3Iso, resolveProject, resolveProjectSafe,
-    parseArgs, flagList, referenceProjectIds, referenceConfig,
+    dateToGMT3Iso, todayGMT3Iso, dueClasses, todayWindowGMT3, resolveProject, resolveProjectSafe,
+    parseArgs, flagList, KNOWN_FLAGS, unknownFlags, referenceProjectIds, referenceConfig,
     defaultGroupId, groupsByProject, needsGroupHeal, isInboxTask,
     reviewGuardReason,
   };

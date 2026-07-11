@@ -96,6 +96,25 @@ ok(h.reviewGuardReason({ note: "" }, ["research"], false) === null, "reviewGuard
 ok(h.reviewGuardReason({ note: "" }, [], false) === null, "reviewGuardReason: ничего не добавляем → пропуск");
 ok(h.reviewGuardReason({ note: "" }, ["review"], true) === null, "reviewGuardReason: --force снимает блок");
 
+// --- dueClasses (срочность по локальному дню GMT+3) ---
+// Окно «сегодня» D: [lower, upper) = [(D-1)T21:00Z, D·T21:00Z). Смотрим start И deadline.
+const dcLower = "2026-07-10T21:00:00.000Z"; // 00:00 11.07 local
+const dcUpper = "2026-07-11T21:00:00.000Z"; // 00:00 12.07 local
+ok(h.dueClasses({ start: "2026-07-10T21:00:00.000Z" }, dcLower, dcUpper).has("today"), "dueClasses: start ровно сегодня → today");
+ok(h.dueClasses({ start: "2026-07-03T21:00:00.000Z" }, dcLower, dcUpper).has("overdue"), "dueClasses: start в прошлом → overdue");
+ok(h.dueClasses({ deadline: "2026-07-05T21:00:00.000Z" }, dcLower, dcUpper).has("overdue"), "dueClasses: deadline в прошлом → overdue");
+ok(h.dueClasses({ start: "2026-07-11T21:00:00.000Z" }, dcLower, dcUpper).size === 0, "dueClasses: start завтра (=upper) → ни today, ни overdue");
+ok(h.dueClasses({ start: null, deadline: null }, dcLower, dcUpper).size === 0, "dueClasses: без дат → пусто");
+const dcBoth = h.dueClasses({ start: "2026-07-03T21:00:00.000Z", deadline: "2026-07-10T21:00:00.000Z" }, dcLower, dcUpper);
+ok(dcBoth.has("overdue") && dcBoth.has("today"), "dueClasses: overdue start + today deadline → оба класса");
+
+// --- unknownFlags (ошибка на неизвестный флаг) ---
+eq(h.unknownFlags("tasks", { due: "today", project: "P-x" }), [], "unknownFlags: валидные флаги tasks → пусто");
+eq(h.unknownFlags("tasks", { today: true }), ["today"], "unknownFlags: --today не флаг tasks → ошибка");
+eq(h.unknownFlags("bucket", { today: true }), [], "unknownFlags: --today валиден для bucket");
+eq(h.unknownFlags("tasks", { bogus: true, x: 1 }).sort(), ["bogus", "x"], "unknownFlags: собирает все неизвестные");
+eq(h.unknownFlags("help", { whatever: true }), [], "unknownFlags: неизвестная команда здесь не валидируется → пусто");
+
 // --- patch-конструкторы ---
 const dp = h.DONE_PATCH();
 ok(dp.complete === 1 && typeof dp.completeLast === "string" && typeof dp.deleteDate === "string", "DONE_PATCH поля");
