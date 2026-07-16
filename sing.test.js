@@ -15,12 +15,38 @@ function eq(actual, expected, msg) {
 }
 function ok(cond, msg) { if (cond) passed++; else { failed++; console.error(`FAIL: ${msg}`); } }
 
+// --- auth config ---
+const codexConfig = `
+[mcp_servers.singularity]
+command = "node"
+args = ["/tmp/singularity/mcp.js", "--baseUrl", "https://api.example.test", "--accessToken", "secret-token", "-n"]
+
+[mcp_servers.other]
+command = "other"
+`;
+const codexArgs = h.findCodexSingularityArgs(codexConfig);
+eq(codexArgs, ["/tmp/singularity/mcp.js", "--baseUrl", "https://api.example.test", "--accessToken", "secret-token", "-n"],
+  "findCodexSingularityArgs: читает args нужной MCP-секции");
+eq(h.authFromArgs(codexArgs, null, null), { baseUrl: "https://api.example.test", token: "secret-token" },
+  "authFromArgs: извлекает URL и токен");
+eq(h.authFromArgs(codexArgs, "https://env.test", "env-token"), { baseUrl: "https://env.test", token: "env-token" },
+  "authFromArgs: env имеет приоритет");
+ok(h.findCodexSingularityArgs("[mcp_servers.other]\ncommand = \"x\"") === null,
+  "findCodexSingularityArgs: отсутствующая секция → null");
+
 // --- даты GMT+3 ---
 // День D в GMT+3 хранится как (D-1)T21:00:00.000Z.
 eq(h.dateToGMT3Iso("2026-06-30"), "2026-06-29T21:00:00.000Z", "dateToGMT3Iso 2026-06-30");
 eq(h.dateToGMT3Iso("2026-01-01"), "2025-12-31T21:00:00.000Z", "dateToGMT3Iso рубеж года");
 ok(/^\d{4}-\d{2}-\d{2}T21:00:00\.000Z$/.test(h.todayGMT3Iso()), "todayGMT3Iso формат полночи GMT+3");
 ok(h.dateToGMT3Iso("плохая дата") === null, "dateToGMT3Iso невалидный формат → null");
+eq(h.tomorrowGMT3Iso("2026-07-15T21:00:00.000Z"), "2026-07-16T21:00:00.000Z", "tomorrowGMT3Iso +1 локальный день");
+
+// --- поиск и безопасный текст чек-листа ---
+ok(h.taskMatchesQuery({ title: "Сравнить Bybit и IDpay" }, "bybit"), "taskMatchesQuery: регистронезависимый поиск");
+ok(!h.taskMatchesQuery({ title: "Купить USD" }, "AMD"), "taskMatchesQuery: несовпадающий заголовок");
+eq(h.checklistTitlesFromText("Первый шаг\n\n  Отложить $3–4 тыс.  \r\n"), ["Первый шаг", "Отложить $3–4 тыс."],
+  "checklistTitlesFromText: строки из файла без shell-интерполяции");
 
 // --- предикаты ---
 ok(h.isDone({ complete: 1 }) === true, "isDone complete:1");
@@ -109,9 +135,12 @@ const dcBoth = h.dueClasses({ start: "2026-07-03T21:00:00.000Z", deadline: "2026
 ok(dcBoth.has("overdue") && dcBoth.has("today"), "dueClasses: overdue start + today deadline → оба класса");
 
 // --- unknownFlags (ошибка на неизвестный флаг) ---
-eq(h.unknownFlags("tasks", { due: "today", project: "P-x" }), [], "unknownFlags: валидные флаги tasks → пусто");
+eq(h.unknownFlags("tasks", { due: "today", project: "P-x", query: "Bybit" }), [], "unknownFlags: валидные флаги tasks → пусто");
 eq(h.unknownFlags("tasks", { today: true }), ["today"], "unknownFlags: --today не флаг tasks → ошибка");
 eq(h.unknownFlags("bucket", { today: true }), [], "unknownFlags: --today валиден для bucket");
+eq(h.unknownFlags("bucket", { tomorrow: true }), [], "unknownFlags: --tomorrow валиден для bucket");
+eq(h.unknownFlags("checklist", { list: true }), [], "unknownFlags: --list валиден для checklist");
+eq(h.unknownFlags("checklist", { "replace-file": "steps.txt" }), [], "unknownFlags: --replace-file валиден для checklist");
 eq(h.unknownFlags("tasks", { bogus: true, x: 1 }).sort(), ["bogus", "x"], "unknownFlags: собирает все неизвестные");
 eq(h.unknownFlags("help", { whatever: true }), [], "unknownFlags: неизвестная команда здесь не валидируется → пусто");
 

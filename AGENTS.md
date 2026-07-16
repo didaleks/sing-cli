@@ -40,8 +40,9 @@ node ./sing.js <cmd>              # напрямую
 ## Аутентификация
 
 1. Переменные окружения `SINGULARITY_ACCESS_TOKEN` (+ опц. `SINGULARITY_BASE_URL`), если заданы.
-2. Иначе — парсинг `~/.claude.json`: берутся аргументы запуска MCP-сервера `singularity`
-   (`--accessToken`, `--baseUrl`). Это home-путь, работает из любой рабочей директории.
+2. Иначе — MCP-секция `singularity` в `~/.codex/config.toml`.
+3. Последний фолбэк — `~/.claude.json`: берутся аргументы запуска MCP-сервера `singularity`
+   (`--accessToken`, `--baseUrl`). Все варианты работают из любой рабочей директории.
 
 База по умолчанию: `https://api.singularity-app.com`. **Токен НИКОГДА не печатается** в stdout/stderr.
 
@@ -50,7 +51,7 @@ node ./sing.js <cmd>              # напрямую
 ### Чтение
 | Команда | Назначение |
 |---|---|
-| `sing tasks [--project ID] [--tag NAME] [--no-reference] [--active] [--candidate] [--deferred true\|false] [--inbox] [--due today\|overdue] [--done\|--all] [--format jsonl\|tsv\|count\|json] [--fields a,b,c] [--tag-ids] [--out FILE]` | Список задач, компактная проекция |
+| `sing tasks [--project ID] [--tag NAME] [--query TEXT] [--no-reference] [--active] [--candidate] [--deferred true\|false] [--inbox] [--due today\|overdue] [--done\|--all] [--format jsonl\|tsv\|count\|json] [--fields a,b,c] [--tag-ids] [--out FILE]` | Список задач, компактная проекция; `--query` ищет фрагмент заголовка без учёта регистра |
 | `sing task <id> [--json]` | Одна задача (полный объект — `--json`) |
 | `sing projects [--format ...] [--out FILE]` | Проекты (порядок/иерархия) |
 | `sing tags` | Теги |
@@ -89,9 +90,12 @@ node ./sing.js <cmd>              # напрямую
 | `sing rename <id> "новое название"` | Переписать заголовок |
 | `sing move <id…> --project ID\|имя [--section NAME]` | Сменить проект (+ привязка к секции); батч |
 | `sing heal-groups [--project ID\|имя] [--dry]` | Привязать задачи-сироты (`group=null`/битая ссылка) к дефолтной секции проекта |
-| `sing bucket <id…> --today\|--week\|--none` | Коробочка дат (см. ниже); батч |
+| `sing bucket <id…> --today\|--tomorrow\|--week\|--none` | Коробочка дат (см. ниже); батч |
 | `sing archive <id…>` | Убрать из активных без «выполнено» (stale); только `deleteDate`; батч |
-| `sing checklist <id> --add "шаг"` | Добавить пункт чеклиста |
+| `sing checklist <id> --add "шаг"` | Добавить пункт чек-листа |
+| `sing checklist <id> --list` | Компактно вывести пункты чек-листа и их ID |
+| `sing checklist <id> --delete ITEM_ID` | Удалить пункт с проверкой, что он принадлежит задаче |
+| `sing checklist <id> --replace-file FILE` | Идемпотентно синхронизировать чек-лист со строками файла; безопасно для `$`, кавычек и другого shell-текста |
 | `sing deadline <id> --date YYYY-MM-DD` | Дедлайн |
 | `sing project-rename <id\|имя> "новое имя"` | Переименовать проект (меняет имя, не ID) |
 | `sing project-create --title '...' [--parent ID\|имя]` | Создать проект (опц. под родителем) |
@@ -110,13 +114,14 @@ node ./sing.js <cmd>              # напрямую
 - **Скрытие выполненных:** `complete:1` сам по себе НЕ убирает задачу из дефолтного `listTasks` API
   (известный баг) — CLI фильтрует на своей стороне; `--done`/`--all` поднимают
   `includeRemoved`/`includeArchived`, чтобы показать архив.
-- **Коробочки дат:** `--today` → `{start: сегодня GMT+3, deferred:false}`; `--week` →
-  `{start:null, deferred:true}`; `--none` → `{start:null, deferred:false}`.
+- **Коробочки дат:** `--today` → `{start: сегодня GMT+3, deferred:false}`; `--tomorrow` →
+  `{start: завтра GMT+3, deferred:false}`; `--week` → `{start:null, deferred:true}`; `--none` →
+  `{start:null, deferred:false}`.
 - **Заметки — формат Delta:** массив операций `[{insert:"…\n"}, …]` БЕЗ обёртки `{"ops":[…]}`;
   последний `insert` всегда заканчивается `\n`. (`sing note --html` принимает HTML и сам конвертит.)
-- **cwd-семантика:** `--out FILE` (дамп) и `note --file PATH` резолвятся относительно **текущей
-  рабочей директории вызова**, не относительно каталога установки `sing`. Это намеренно — звать из той
-  папки, куда нужен файл.
+- **cwd-семантика:** `--out FILE` (дамп), `note --file PATH` и `checklist --replace-file PATH`
+  резолвятся относительно **текущей рабочей директории вызова**, не относительно каталога установки
+  `sing`. Это намеренно — звать из той папки, куда нужен файл.
 - **Merge дублей** CLI-командой не делается (в API нет слияния): скопировать контекст в задачу-канон
   (`sing note`), затем `sing done`/`sing archive` дубликат.
 - **Секции (task groups) и «сироты».** У каждого проекта есть ровно одна **fake-группа**

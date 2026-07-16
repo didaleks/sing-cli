@@ -7,8 +7,8 @@
  * Этот CLI ходит в API live, а в stdout печатает только компактную проекцию нужных
  * полей (или метрики). Сырой полный дамп — опционально в файл (--out) для jq, не в контекст.
  *
- * Аутентификация: env SINGULARITY_BASE_URL / SINGULARITY_ACCESS_TOKEN, иначе парсинг ~/.claude.json
- * (аргументы запуска MCP-сервера singularity). Токен НИКОГДА не печатается.
+ * Аутентификация: env SINGULARITY_BASE_URL / SINGULARITY_ACCESS_TOKEN, затем MCP-конфиг Codex,
+ * затем ~/.claude.json. Токен НИКОГДА не печатается.
  *
  * Канон правил и справочник — AGENTS.md в этой директории.
  */
@@ -44,23 +44,47 @@ function resolveAuth() {
   let token = process.env.SINGULARITY_ACCESS_TOKEN;
   if (baseUrl && token) return { baseUrl, token };
 
-  // Фолбэк: вытащить из ~/.claude.json (args запуска MCP-сервера singularity).
+  // Первый фолбэк: args глобального MCP-сервера в ~/.codex/config.toml.
+  try {
+    const config = fs.readFileSync(path.join(os.homedir(), ".codex", "config.toml"), "utf8");
+    ({ baseUrl, token } = authFromArgs(findCodexSingularityArgs(config), baseUrl, token));
+  } catch (_) { /* ignore */ }
+
+  // Второй фолбэк: args запуска MCP-сервера в ~/.claude.json.
   try {
     const cfg = JSON.parse(fs.readFileSync(path.join(os.homedir(), ".claude.json"), "utf8"));
-    const args = findSingularityArgs(cfg);
-    if (args) {
-      const bi = args.indexOf("--baseUrl");
-      const ti = args.indexOf("--accessToken");
-      if (!baseUrl && bi >= 0) baseUrl = args[bi + 1];
-      if (!token && ti >= 0) token = args[ti + 1];
-    }
+    ({ baseUrl, token } = authFromArgs(findSingularityArgs(cfg), baseUrl, token));
   } catch (_) { /* ignore */ }
 
   baseUrl = baseUrl || "https://api.singularity-app.com";
   if (!token) {
-    fail("Не найден access token. Задай env SINGULARITY_ACCESS_TOKEN или проверь ~/.claude.json (mcpServers.singularity).");
+    fail("Не найден access token. Задай env SINGULARITY_ACCESS_TOKEN или настрой MCP singularity в Codex/Claude.");
   }
   return { baseUrl, token };
+}
+
+function authFromArgs(args, baseUrl, token) {
+  if (!args) return { baseUrl, token };
+  const bi = args.indexOf("--baseUrl");
+  const ti = args.indexOf("--accessToken");
+  if (!baseUrl && bi >= 0) baseUrl = args[bi + 1];
+  if (!token && ti >= 0) token = args[ti + 1];
+  return { baseUrl, token };
+}
+
+function findCodexSingularityArgs(config) {
+  const header = /^\[mcp_servers\.singularity\][ \t]*$/m.exec(config);
+  if (!header) return null;
+  const rest = config.slice(header.index + header[0].length);
+  const nextSection = rest.search(/^\[/m);
+  const section = nextSection >= 0 ? rest.slice(0, nextSection) : rest;
+  const args = section.match(/^args\s*=\s*\[([^\]]*)\]/m);
+  if (!args) return null;
+  const values = [];
+  for (const item of args[1].matchAll(/"((?:\\.|[^"\\])*)"/g)) {
+    try { values.push(JSON.parse(`"${item[1]}"`)); } catch (_) { return null; }
+  }
+  return values.length ? values : null;
 }
 
 // Рекурсивно ищет массив args, содержащий и mcp.js singularity, и --accessToken.
@@ -194,7 +218,7 @@ function flagList(v) {
 // Допустимые флаги по команде — для «падать на неизвестном флаге» (не молча игнорировать).
 // Команды только с позиционными аргументами — пустой список.
 const KNOWN_FLAGS = {
-  tasks: ["project", "tag", "no-reference", "active", "candidate", "next-action", "deferred", "inbox", "done", "all", "format", "fields", "tag-ids", "out", "due"],
+  tasks: ["project", "tag", "query", "no-reference", "active", "candidate", "next-action", "deferred", "inbox", "done", "all", "format", "fields", "tag-ids", "out", "due"],
   task: ["json"],
   projects: ["format", "out"],
   tags: [],
@@ -206,9 +230,9 @@ const KNOWN_FLAGS = {
   rename: [],
   move: ["project", "section"],
   "heal-groups": ["project", "dry"],
-  bucket: ["today", "week", "none"],
+  bucket: ["today", "tomorrow", "week", "none"],
   archive: [],
-  checklist: ["add"],
+  checklist: ["add", "list", "delete", "replace-file"],
   deadline: ["date"],
   "project-rename": [],
   "project-create": ["title", "parent"],
@@ -255,6 +279,9 @@ function todayGMT3Iso() {
   const ymd = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Moscow" }).format(new Date());
   return dateToGMT3Iso(ymd);
 }
+function tomorrowGMT3Iso(todayIso = todayGMT3Iso()) {
+  return new Date(new Date(todayIso).getTime() + 86400000).toISOString();
+}
 // Класс срочности задачи по локальному дню GMT+3. Окно «сегодня» D = [lower, upper) =
 // [(D-1)T21:00Z, D·T21:00Z); Москва — фиксированный UTC+3 (без DST), поэтому upper = lower + 24ч.
 // Смотрим И start, И deadline: дата в прошлом → "overdue", дата в окне сегодня → "today".
@@ -272,6 +299,15 @@ function todayWindowGMT3() {
   const lower = todayGMT3Iso();
   const upper = new Date(new Date(lower).getTime() + 86400000).toISOString();
   return { lower, upper };
+}
+
+function taskMatchesQuery(task, query) {
+  return String(task && task.title || "").toLocaleLowerCase("ru-RU")
+    .includes(String(query).toLocaleLowerCase("ru-RU"));
+}
+
+function checklistTitlesFromText(text) {
+  return String(text).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
 
 // Карта имя→id и id→имя по проектам (аналог tagMaps).
@@ -362,6 +398,7 @@ async function runBatch(ids, fn) {
 // --------------------------- commands ---------------------------
 
 async function cmdTasks(flags) {
+  if (flags.query === true) fail('нужен текст: --query "фрагмент заголовка"');
   const c = client();
   // done/archive выставляют deleteDate — такие задачи сервер прячет из дефолтного listTasks.
   // Чтобы --done/--all реально их показали, просим у API removed/archived.
@@ -397,6 +434,7 @@ async function cmdTasks(flags) {
     const want = String(flags.deferred) !== "false";
     rows = rows.filter((t) => Boolean(t.deferred) === want);
   }
+  if (flags.query) rows = rows.filter((t) => taskMatchesQuery(t, flags.query));
   if (flags.inbox) rows = rows.filter(isInboxTask); // истинный инбокс: без проекта И без даты
   if (flags.due) {
     const want = flagList(flags.due);
@@ -634,10 +672,10 @@ async function cmdHealGroups(flags) {
   });
 }
 
-// bucket — коробочка дат (батч). today=start сегодня (GMT+3); week=deferred; none=снять обе.
+// bucket — коробочка дат (батч). today/tomorrow=start в GMT+3; week=deferred; none=снять обе.
 async function cmdBucket(positional, flags) {
-  const modes = ["today", "week", "none"].filter((m) => flags[m]);
-  if (modes.length !== 1) fail("usage: sing bucket <id...> --today|--week|--none (ровно один флаг)");
+  const modes = ["today", "tomorrow", "week", "none"].filter((m) => flags[m]);
+  if (modes.length !== 1) fail("usage: sing bucket <id...> --today|--tomorrow|--week|--none (ровно один флаг)");
   const mode = modes[0];
   const c = client();
   const ids = resolveIds(positional);
@@ -645,6 +683,7 @@ async function cmdBucket(positional, flags) {
     const before = await c.getTask(id);
     let patch;
     if (mode === "today") patch = { id, start: todayGMT3Iso(), deferred: false };
+    else if (mode === "tomorrow") patch = { id, start: tomorrowGMT3Iso(), deferred: false };
     else if (mode === "week") patch = { id, start: null, deferred: true };
     else patch = { id, start: null, deferred: false }; // none — снять start через null (см. спайк)
     await c.updateTask(patch);
@@ -668,16 +707,67 @@ async function cmdArchive(positional) {
   });
 }
 
-// checklist — добавить пункт чеклиста (декомпозиция задачи).
+// checklist — прочитать или синхронизировать шаги задачи.
 async function cmdChecklist(positional, flags) {
   const id = positional[0];
-  if (!id) fail('usage: sing checklist <id> --add "шаг"');
-  if (!flags.add || flags.add === true) fail('нужен --add "текст шага"');
+  if (!id) fail('usage: sing checklist <id> --add "шаг"|--list|--delete ITEM_ID|--replace-file FILE');
+  const operations = ["add", "list", "delete", "replace-file"].filter((key) => flags[key] != null);
+  if (operations.length !== 1) fail("для checklist нужен ровно один режим: --add, --list, --delete или --replace-file");
   const c = client();
-  const title = String(flags.add);
-  await c.createChecklistItem({ parent: id, title });
-  const items = asArray(await c.listChecklistItems({ parent: id }), "checklistItems");
-  process.stdout.write(`checklist ${id}: добавлен "${title}" (всего пунктов: ${items.length})\n`);
+  const list = async () => asArray(await c.listChecklistItems({ parent: id }), "checklistItems")
+    .slice().sort((a, b) => (a.parentOrder || 0) - (b.parentOrder || 0));
+
+  if (flags.list) {
+    const items = await list();
+    for (const item of items) {
+      process.stdout.write(JSON.stringify({ id: item.id, title: item.title, checked: Boolean(item.checked) }) + "\n");
+    }
+    return;
+  }
+
+  if (flags.add != null) {
+    if (flags.add === true) fail('нужен --add "текст шага"');
+    const title = String(flags.add);
+    await c.createChecklistItem({ parent: id, title });
+    const items = await list();
+    process.stdout.write(`checklist ${id}: добавлен "${title}" (всего пунктов: ${items.length})\n`);
+    return;
+  }
+
+  if (flags.delete != null) {
+    if (flags.delete === true) fail("нужен --delete ITEM_ID");
+    const itemId = String(flags.delete);
+    const before = await list();
+    const item = before.find((x) => x.id === itemId);
+    if (!item) fail(`пункт ${itemId} не найден в задаче ${id}`);
+    await c.deleteChecklistItem(itemId);
+    const after = await list();
+    if (after.some((x) => x.id === itemId)) fail(`удаление ${itemId} не подтверждено`);
+    process.stdout.write(`checklist ${id}: удалён "${item.title}" (осталось: ${after.length})\n`);
+    return;
+  }
+
+  if (flags["replace-file"] === true) fail("нужен --replace-file FILE");
+  const file = String(flags["replace-file"]);
+  const titles = checklistTitlesFromText(fs.readFileSync(file, "utf8"));
+  if (!titles.length) fail("файл чек-листа пуст; для очистки удаляй пункты явно через --delete");
+  const available = await list();
+  for (let i = 0; i < titles.length; i++) {
+    const index = available.findIndex((item) => item.title === titles[i]);
+    let item;
+    if (index >= 0) item = available.splice(index, 1)[0];
+    else {
+      const created = await c.createChecklistItem({ parent: id, title: titles[i] });
+      item = created.checklistItem || created;
+    }
+    await c.updateChecklistItem({ id: item.id, parentOrder: (i + 1) * 100 });
+  }
+  for (const item of available) await c.deleteChecklistItem(item.id);
+  const after = await list();
+  if (JSON.stringify(after.map((item) => item.title)) !== JSON.stringify(titles)) {
+    fail("замена чек-листа не подтверждена перечиткой");
+  }
+  process.stdout.write(`checklist ${id}: синхронизировано ${after.length} пунктов из ${file}\n`);
 }
 
 // deadline — проставить дедлайн (GMT+3).
@@ -730,7 +820,7 @@ function usage() {
   process.stdout.write(`sing — компактный CLI поверх Singularity API
 
 Чтение (в stdout только проекция нужных полей; --out FILE кладёт сырой дамп для jq):
-  sing tasks [--project ID] [--tag NAME] [--no-reference] [--active] [--candidate]
+  sing tasks [--project ID] [--tag NAME] [--query TEXT] [--no-reference] [--active] [--candidate]
              [--deferred true|false] [--inbox] [--due today|overdue] [--done|--all]
              [--format jsonl|tsv|count|json] [--fields a,b,c] [--tag-ids] [--out FILE]
              # --inbox = истинные Входящие: без проекта И без даты (start/deferred) — канонная выборка на разбор
@@ -749,9 +839,9 @@ function usage() {
   sing rename <id> "новое название"             # переписать заголовок (монки-формат)
   sing move <id...> --project ID|имя [--section NAME]  # сменить проект (+ привязать к секции; дефолт — не осиротить)
   sing heal-groups [--project ID|имя] [--dry]   # привязать сирот (group=null/битая) к дефолтной секции проекта
-  sing bucket <id...> --today|--week|--none      # коробочка дат (today=start сегодня GMT+3, week=deferred, none=снять обе)
+  sing bucket <id...> --today|--tomorrow|--week|--none  # коробочка дат в GMT+3
   sing archive <id...>                          # убрать из активных без «выполнено» (разбор stale)
-  sing checklist <id> --add "шаг"               # пункт чеклиста (декомпозиция)
+  sing checklist <id> --add "шаг"|--list|--delete ITEM_ID|--replace-file FILE
   sing deadline <id> --date YYYY-MM-DD          # дедлайн (GMT+3)
   sing project-rename <id|имя> "новое имя"      # переименовать проект (меняет имя, не ID)
   sing project-create --title '...' [--parent ID|имя]  # создать проект (опц. под родителем)
@@ -816,9 +906,9 @@ if (require.main === module) {
 } else {
   module.exports = {
     nowIso, DONE_PATCH, ARCHIVE_PATCH, isArchived, isDone, isActive,
-    dateToGMT3Iso, todayGMT3Iso, dueClasses, todayWindowGMT3, resolveProject, resolveProjectSafe,
+    dateToGMT3Iso, todayGMT3Iso, tomorrowGMT3Iso, dueClasses, todayWindowGMT3, resolveProject, resolveProjectSafe,
     parseArgs, flagList, KNOWN_FLAGS, unknownFlags, referenceProjectIds, referenceConfig,
     defaultGroupId, groupsByProject, needsGroupHeal, isInboxTask,
-    reviewGuardReason,
+    reviewGuardReason, authFromArgs, findCodexSingularityArgs, taskMatchesQuery, checklistTitlesFromText,
   };
 }

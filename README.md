@@ -35,16 +35,20 @@ export SINGULARITY_ACCESS_TOKEN=…           # обязательно
 export SINGULARITY_BASE_URL=https://api.singularity-app.com   # опц., это и есть дефолт
 ```
 
-Если запущен официальный MCP-сервер Singularity, как фолбэк токен/URL подхватываются из
-`~/.claude.json` (аргументы запуска `mcpServers.singularity`).
+Если env не задан, токен/URL подхватываются из MCP-секции `singularity` в
+`~/.codex/config.toml`, затем — из `~/.claude.json` (аргументы запуска
+`mcpServers.singularity`).
 
 ## Быстрый старт
 
 ```sh
 ./sing tasks --format count        # сколько активных задач
 ./sing tasks --candidate           # компактный список кандидатов «что делать»
+./sing tasks --query "Bybit"        # найти задачи по фрагменту заголовка
 ./sing metrics                     # метрики нагрузки + backpressure
 ./sing done T-123 T-456            # закрыть пачкой (с верификацией)
+./sing bucket T-123 --tomorrow      # поставить задачу на завтра в GMT+3
+./sing checklist T-123 --replace-file steps.txt  # безопасно синхронизировать чек-лист
 ./sing tasks --out tmp/all.json    # сырой дамп в файл для jq (не в контекст)
 ```
 

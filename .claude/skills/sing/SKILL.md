@@ -16,8 +16,8 @@ language: ru
 1. Убедись, что инструмент доступен: `sing help` (или по абсолютному пути / через `./bin/sing`).
 2. Канон команд и правил API — `AGENTS.md` в корне репозитория. При сомнении в поведении (даты,
    «выполнено=архив», коробочки дат, формат заметок) сверяйся с ним, не угадывай.
-3. Токен — из env `SINGULARITY_ACCESS_TOKEN` (или фолбэком из `~/.claude.json`). Никогда не печатай
-   токен и не проси пользователя присылать его в чат.
+3. Токен — из env `SINGULARITY_ACCESS_TOKEN`, затем из MCP-конфига Codex или Claude. Никогда не
+   печатай токен и не проси пользователя присылать его в чат.
 
 ## Главное правило: не тащить полные объекты в контекст
 
@@ -33,6 +33,7 @@ sing tasks --format count                 # сколько активных
 sing tasks --candidate                    # кандидаты «что делать» (active без Waiting/Мозгоштурм)
 sing tasks --project P-… --format tsv      # задачи проекта таблицей
 sing tasks --tag review                   # по тегу
+sing tasks --query "фрагмент заголовка"    # найти задачу без полного дампа
 sing metrics                              # нагрузка + backpressure (review/research)
 ```
 
@@ -48,13 +49,16 @@ sing metrics                              # нагрузка + backpressure (rev
 ```sh
 sing done <id…>                           # закрыть + убрать из активных; батч; идемпотентно
 sing move <id…> --project P-…|"Имя"        # сменить проект; батч
-sing bucket <id…> --today|--week|--none    # коробочка дат
+sing bucket <id…> --today|--tomorrow|--week|--none  # коробочка дат
 sing rename <id> "новое название"
 sing deadline <id> --date YYYY-MM-DD
 sing tag-swap <id> --add NAME --remove NAME
 sing note <id> --html '<p>…</p>'           # заметка (HTML → Delta автоматически)
 sing create --title '…' [--project P-…] [--tags A,B]
 sing archive <id…>                         # убрать без отметки «выполнено» (stale)
+sing checklist <id> --list                 # компактный список пунктов и их ID
+sing checklist <id> --delete ITEM_ID       # удалить конкретный пункт
+sing checklist <id> --replace-file FILE    # точная синхронизация; `$` и кавычки не трогает shell
 ```
 
 Батч (`done`/`move`/`bucket`/`archive`): id — аргументами **или** через stdin; частичный сбой не
