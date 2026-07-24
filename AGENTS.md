@@ -51,13 +51,19 @@ node ./sing.js <cmd>              # напрямую
 ### Чтение
 | Команда | Назначение |
 |---|---|
-| `sing tasks [--project ID] [--tag NAME] [--query TEXT] [--no-reference] [--active] [--candidate] [--deferred true\|false] [--inbox] [--due today\|overdue] [--done\|--all] [--format jsonl\|tsv\|count\|json] [--fields a,b,c] [--tag-ids] [--out FILE]` | Список задач, компактная проекция; `--query` ищет фрагмент заголовка без учёта регистра |
+| `sing tasks [--project ID\|имя] [--exclude-project ID\|имя] [--focus] [--tag NAME] [--query TEXT] [--no-reference] [--active] [--candidate] [--deferred true\|false] [--inbox] [--due today\|overdue] [--done\|--all] [--format jsonl\|tsv\|count\|json] [--fields a,b,c] [--tag-ids] [--out FILE]` | Список задач, компактная проекция; `--query` ищет фрагмент заголовка без учёта регистра |
 | `sing task <id> [--json]` | Одна задача (полный объект — `--json`) |
 | `sing projects [--format ...] [--out FILE]` | Проекты (порядок/иерархия) |
 | `sing tags` | Теги |
 | `sing metrics [--json] [--done\|--all]` | Метрики нагрузки + backpressure (review/research) |
 
 Фильтры: `--active` = не reference и не deferred; `--candidate` = active без тегов `Waiting`/`Мозгоштурм`.
+**`--project`** = задачи проекта **И всех подпроектов** (клиентская фильтрация по дереву `projectId`;
+серверный фильтр API не видит задачи-сироты `group=null`, поэтому обходим его). Принимает полный
+`P-…` ID, короткий префикс (`P-d2321f78` → полный UUID при однозначном совпадении) или имя проекта.
+**`--exclude-project`** = ОТсечь дерево проекта (например, `--exclude-project P-99079a23` для
+«без рабочих задач SmartWay»). **`--focus`** = задачи из проектов под полкой `Focus` (имя ищется
+в дереве проектов). Поле `project` в выводе = **имя** проекта (не ID); для ID — `--fields projectId`.
 **`--inbox` = истинные Входящие: без проекта И без даты** (`start`/`deferred` пусты) — задача поймана «по
 умолчанию» и ещё не разобрана. Назначили проект ИЛИ коробочку-дату → ушла из инбокса. Это **канонная
 выборка на разбор** (компактно, одной командой — НЕ через дамп+`jq`).
