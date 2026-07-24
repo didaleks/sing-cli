@@ -66,11 +66,11 @@
 | `tag-swap` | `cmdTagSwap` | `listTags`, `getTask`, `updateTask`, `getTask` (верификация) |
 | `note` | `cmdNote` | `updateTask` |
 | `create` | `cmdCreate` | `listTags` (если `--tags`), `createTask` |
-| `done` | `cmdDone` | `getTask`, `updateTask`, `getTask` (верификация); батч |
+| `done` | `cmdDone` | `getTask`, локальный PATCH без `id` в теле, `listTasks(includeRemoved)` (верификация); батч |
 | `rename` | `cmdRename` | `getTask`, `updateTask`, `getTask` |
 | `move` | `cmdMove` | `listProjects`, `getTask`, `updateTask`, `getTask`; батч |
 | `bucket` | `cmdBucket` | `getTask`, `updateTask`, `getTask`; батч |
-| `archive` | `cmdArchive` | `getTask`, `updateTask`, `getTask`; батч |
+| `archive` | `cmdArchive` | `getTask`, локальный PATCH без `id` в теле, `listTasks(includeRemoved)`; батч |
 | `checklist` | `cmdChecklist` | `createChecklistItem`, `listChecklistItems` |
 | `deadline` | `cmdDeadline` | `getTask`, `updateTask`, `getTask` |
 | `project-rename` | `cmdProjectRename` | `listProjects`, `updateProject`, `getProject` |

@@ -146,9 +146,15 @@ eq(h.unknownFlags("help", { whatever: true }), [], "unknownFlags: неизвес
 
 // --- patch-конструкторы ---
 const dp = h.DONE_PATCH();
-ok(dp.complete === 1 && typeof dp.completeLast === "string" && typeof dp.deleteDate === "string", "DONE_PATCH поля");
+ok(dp.complete === 1 && dp.completeLast === undefined && typeof dp.deleteDate === "string",
+  "DONE_PATCH отправляет только разрешённые API поля");
 const ap = h.ARCHIVE_PATCH();
 ok(ap.deleteDate && ap.complete === undefined, "ARCHIVE_PATCH только deleteDate, без complete");
+eq(h.taskUpdateRequest({ id: "T-123", title: "Новый заголовок", start: null }),
+  { id: "T-123", data: { title: "Новый заголовок", start: null } },
+  "taskUpdateRequest: id остаётся в URL и не попадает в PATCH-тело");
+ok(h.isNotFound({ response: { status: 404 } }), "isNotFound: HTTP 404");
+ok(!h.isNotFound({ response: { status: 400 } }), "isNotFound: прочая ошибка");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

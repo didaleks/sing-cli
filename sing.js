@@ -129,6 +129,42 @@ function asArray(resp, key) {
 const getTasks = async (c, params) => asArray(await c.listTasks(params || {}), "tasks");
 const getProjects = async (c) => asArray(await c.listProjects(), "projects");
 
+// Текущий PATCH /v2/task/:id запрещает `id` в JSON-теле, а вендорный ApiClient пока отправляет
+// объект целиком. Держим совместимость здесь, не меняя вендорный client.js.
+function taskUpdateRequest(task) {
+  if (!task || !task.id) throw new Error("для обновления задачи нужен id");
+  const { id, ...data } = task;
+  return { id, data };
+}
+
+async function updateTask(c, task) {
+  const { id, data } = taskUpdateRequest(task);
+  const response = await c.client.patch(`/v2/task/${id}`, data, c.createRequestConfig());
+  return response.data;
+}
+
+function isNotFound(err) {
+  return Boolean(err && err.response && err.response.status === 404);
+}
+
+// После deleteDate прямой GET теперь отвечает 404. Для идемпотентности и проверки ищем задачу
+// в общей выдаче, явно включающей удалённые и экземпляры повторений.
+async function getTaskIncludingRemoved(c, id) {
+  try {
+    return await c.getTask(id);
+  } catch (err) {
+    if (!isNotFound(err)) throw err;
+    const tasks = await getTasks(c, {
+      includeRemoved: true,
+      includeArchived: true,
+      includeAllRecurrenceInstances: true,
+    });
+    const task = tasks.find((item) => item.id === id);
+    if (task) return task;
+    throw err;
+  }
+}
+
 // Множество reference-проектов: всё под настроенной сферой + явный набор (см. referenceConfig).
 function referenceProjectIds(projects, cfg) {
   const { sphere, fallback } = cfg || referenceConfig();
@@ -251,11 +287,11 @@ function unknownFlags(cmd, flags) {
 // Поля done/archive определены спайком по живому API (см. историю):
 // - `complete:1` сам по себе НЕ убирает задачу из listTasks (это и есть известный баг);
 // - `archived`/`removed` API молча игнорирует (не сохраняются);
-// - рабочий рычаг «убрать из активных» — `deleteDate` (задача уходит в корзину, getTask продолжает
-//   работать, видна с includeRemoved:true). Снятие `start` — через `null` (`""` сохраняется буквально).
+// - рабочий рычаг «убрать из активных» — `deleteDate` (задача уходит в корзину, прямой getTask
+//   отвечает 404, но она видна с includeRemoved:true). Снятие `start` — через `null`.
 const nowIso = () => new Date().toISOString();
 // done = закрыть + реально убрать из активных (как ручная отметка «выполнено»).
-const DONE_PATCH = () => ({ complete: 1, completeLast: nowIso(), deleteDate: nowIso() });
+const DONE_PATCH = () => ({ complete: 1, deleteDate: nowIso() });
 // archive = убрать без отметки «выполнено» (разбор stale-задач).
 const ARCHIVE_PATCH = () => ({ deleteDate: nowIso() });
 
@@ -543,7 +579,7 @@ async function cmdTagSwap(positional, flags) {
   const add = addNames.map(resolve);
   const remove = new Set(flagList(flags.remove).map(resolve));
   const next = Array.from(new Set([...(t.tags || []).filter((x) => !remove.has(x)), ...add]));
-  await c.updateTask({ id, tags: next });
+  await updateTask(c, { id, tags: next });
   // Встроенная верификация: перечитываем и печатаем итоговые теги.
   const after = await c.getTask(id);
   process.stdout.write(
@@ -559,7 +595,7 @@ async function cmdNote(positional, flags) {
   if (flags.file) note = fs.readFileSync(flags.file, "utf8");
   if (note == null || note === true) fail("нужен --html '<...>' или --file PATH");
   const c = client();
-  await c.updateTask({ id, note });
+  await updateTask(c, { id, note });
   process.stdout.write(`note обновлена для ${id} (${String(note).length} символов)\n`);
 }
 
@@ -589,10 +625,10 @@ async function cmdDone(positional) {
   const c = client();
   const ids = resolveIds(positional);
   await runBatch(ids, async (id) => {
-    const before = await c.getTask(id);
+    const before = await getTaskIncludingRemoved(c, id);
     if (isDone(before)) { process.stdout.write(`done ${id} "${name(before) || ""}" — уже done\n`); return; }
-    await c.updateTask({ id, ...DONE_PATCH() });
-    const after = await c.getTask(id); // верификация по полям, не по коду ответа
+    await updateTask(c, { id, ...DONE_PATCH() });
+    const after = await getTaskIncludingRemoved(c, id);
     const mark = isDone(after) ? "" : " ⚠ не подтверждено";
     process.stdout.write(`done ${id} "${name(after) || name(before) || ""}" → complete=${after.complete || 0} deleteDate=${after.deleteDate ? "set" : "—"}${mark}\n`);
   });
@@ -605,7 +641,7 @@ async function cmdRename(positional) {
   if (!id || !title) fail('usage: sing rename <id> "новое название"');
   const c = client();
   const before = await c.getTask(id);
-  await c.updateTask({ id, title });
+  await updateTask(c, { id, title });
   const after = await c.getTask(id);
   process.stdout.write(`rename ${id}\n  было:  ${before.title || "—"}\n  стало: ${after.title || "—"}\n`);
 }
@@ -630,7 +666,7 @@ async function cmdMove(positional, flags) {
     const before = await c.getTask(id);
     const patch = { id, projectId };
     if (targetGroup) patch.group = targetGroup; // не осиротить: привязать к секции целевого проекта
-    await c.updateTask(patch);
+    await updateTask(c, patch);
     const after = await c.getTask(id);
     const from = pm.idToName.get(before.projectId) || before.projectId || "Входящие";
     const to = pm.idToName.get(after.projectId) || after.projectId;
@@ -665,7 +701,7 @@ async function cmdHealGroups(flags) {
     const before = await c.getTask(id);
     const target = defaultGroupId(groups, before.projectId);
     if (!target) { process.stdout.write(`heal ${id} "${name(before) || ""}" — у проекта нет секций, пропуск\n`); return; }
-    await c.updateTask({ id, group: target });
+    await updateTask(c, { id, group: target });
     const after = await c.getTask(id);
     const mark = after.group === target ? "ok" : "⚠ не подтверждено";
     process.stdout.write(`heal ${id} "${name(after) || ""}": group → ${target} [${mark}]\n`);
@@ -686,7 +722,7 @@ async function cmdBucket(positional, flags) {
     else if (mode === "tomorrow") patch = { id, start: tomorrowGMT3Iso(), deferred: false };
     else if (mode === "week") patch = { id, start: null, deferred: true };
     else patch = { id, start: null, deferred: false }; // none — снять start через null (см. спайк)
-    await c.updateTask(patch);
+    await updateTask(c, patch);
     const after = await c.getTask(id);
     const fmt = (t) => `start=${t.start || "—"} deferred=${Boolean(t.deferred)}`;
     process.stdout.write(`bucket ${id} (${mode}): ${fmt(before)} → ${fmt(after)}\n`);
@@ -698,10 +734,10 @@ async function cmdArchive(positional) {
   const c = client();
   const ids = resolveIds(positional);
   await runBatch(ids, async (id) => {
-    const before = await c.getTask(id);
+    const before = await getTaskIncludingRemoved(c, id);
     if (isArchived(before)) { process.stdout.write(`archive ${id} "${name(before) || ""}" — уже archived\n`); return; }
-    await c.updateTask({ id, ...ARCHIVE_PATCH() });
-    const after = await c.getTask(id);
+    await updateTask(c, { id, ...ARCHIVE_PATCH() });
+    const after = await getTaskIncludingRemoved(c, id);
     const mark = after.deleteDate ? "set" : "⚠ не подтверждено";
     process.stdout.write(`archive ${id} "${name(after) || ""}" → deleteDate=${mark}\n`);
   });
@@ -778,7 +814,7 @@ async function cmdDeadline(positional, flags) {
   if (!iso) fail("нужен --date в формате YYYY-MM-DD");
   const c = client();
   const before = await c.getTask(id);
-  await c.updateTask({ id, deadline: iso });
+  await updateTask(c, { id, deadline: iso });
   const after = await c.getTask(id);
   process.stdout.write(`deadline ${id} "${name(after) || ""}": ${before.deadline || "—"} → ${after.deadline}\n`);
 }
@@ -910,5 +946,6 @@ if (require.main === module) {
     parseArgs, flagList, KNOWN_FLAGS, unknownFlags, referenceProjectIds, referenceConfig,
     defaultGroupId, groupsByProject, needsGroupHeal, isInboxTask,
     reviewGuardReason, authFromArgs, findCodexSingularityArgs, taskMatchesQuery, checklistTitlesFromText,
+    taskUpdateRequest, isNotFound,
   };
 }
