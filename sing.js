@@ -191,10 +191,11 @@ async function tagMaps(c) {
   return { nameToId, idToName, tags };
 }
 
-function projectTask(t, fields, idToName) {
+function projectTask(t, fields, idToName, projectIdToName) {
   const out = {};
   for (const f of fields) {
     if (f === "tags" && idToName) out.tags = (t.tags || []).map((id) => idToName.get(id) || id);
+    else if (f === "project") out.project = (projectIdToName && projectIdToName.get(t.projectId)) || t.projectId || "";
     else out[f] = t[f];
   }
   return out;
@@ -254,7 +255,7 @@ function flagList(v) {
 // Допустимые флаги по команде — для «падать на неизвестном флаге» (не молча игнорировать).
 // Команды только с позиционными аргументами — пустой список.
 const KNOWN_FLAGS = {
-  tasks: ["project", "tag", "query", "no-reference", "active", "candidate", "next-action", "deferred", "inbox", "done", "all", "format", "fields", "tag-ids", "out", "due"],
+  tasks: ["project", "exclude-project", "focus", "tag", "query", "no-reference", "active", "candidate", "next-action", "deferred", "inbox", "done", "all", "format", "fields", "tag-ids", "out", "due"],
   task: ["json"],
   projects: ["format", "out"],
   tags: [],
@@ -353,11 +354,40 @@ async function projectMaps(c) {
   for (const p of projects) { nameToId.set(name(p), p.id); idToName.set(p.id, name(p)); }
   return { nameToId, idToName, projects };
 }
-// P-… → как есть; иначе имя→id; не найдено → null.
+
+// Множество id проекта и всех его потомков (дерево). Для --project (включить подпроекты)
+// и --exclude-project (отсечь дерево). BFS по parent-связям.
+function descendantProjectIds(rootId, projects) {
+  const ids = new Set([rootId]);
+  const byParent = new Map();
+  for (const p of projects) {
+    if (!p.parent) continue;
+    if (!byParent.has(p.parent)) byParent.set(p.parent, []);
+    byParent.get(p.parent).push(p.id);
+  }
+  const queue = [rootId];
+  while (queue.length) {
+    const cur = queue.shift();
+    for (const child of (byParent.get(cur) || [])) {
+      if (!ids.has(child)) { ids.add(child); queue.push(child); }
+    }
+  }
+  return ids;
+}
+// P-… → как есть (полный ID) или prefix-match для коротких ID (P-d2321f78 → P-d2321f78-78fe-…);
+// иначе имя→id; не найдено → null.
 function resolveProjectSafe(v, pm) {
   if (v == null || v === true) return null;
   const s = String(v);
-  if (/^P-/.test(s)) return s;
+  if (/^P-/.test(s)) {
+    if (pm.idToName) {
+      if (pm.idToName.has(s)) return s; // точное совпадение — быстрый путь
+      const matches = [...pm.idToName.keys()].filter((id) => id.startsWith(s));
+      if (matches.length === 1) return matches[0]; // короткий ID → полный
+      if (matches.length > 1) return null; // неоднозначный префикс
+    }
+    return s; // нет карты idToName — вернуть как есть (backward compat)
+  }
   return pm.nameToId.get(s) || null;
 }
 function resolveProject(v, pm) {
@@ -438,8 +468,9 @@ async function cmdTasks(flags) {
   const c = client();
   // done/archive выставляют deleteDate — такие задачи сервер прячет из дефолтного listTasks.
   // Чтобы --done/--all реально их показали, просим у API removed/archived.
+  // NB: НЕ фильтруем по projectId на стороне API — серверный фильтр не видит задачи-сироты
+  // (group=null при живом projectId). Фильтрация по проекту — клиентская, по полю projectId.
   const listParams = {};
-  if (flags.project) listParams.projectId = flags.project;
   if (flags.done || flags.all) { listParams.includeRemoved = true; listParams.includeArchived = true; }
   const [tasks, projects, tm] = await Promise.all([
     getTasks(c, listParams),
@@ -453,10 +484,33 @@ async function cmdTasks(flags) {
   const wantTags = flagList(flags.tag).map((n) => tm.nameToId.get(n) || n);
   const waitingId = tm.nameToId.get("Waiting");
   const brainstormId = tm.nameToId.get("Мозгоштурм");
+  const projectIdToName = new Map(projects.map((p) => [p.id, name(p)]));
 
   let rows = tasks;
   // По умолчанию скрываем выполненные/архивные (фикс бага: complete:1 остаётся в listTasks API).
   if (!(flags.done || flags.all)) rows = rows.filter(isActive);
+  // --project: клиентская фильтрация по projectId + всё дерево подпроектов (серверный фильтр
+  // не видит сирот group=null — поэтому здесь, не в listParams).
+  if (flags.project) {
+    const pm = { nameToId: new Map(projects.map((p) => [name(p), p.id])), idToName: projectIdToName };
+    const pid = resolveProject(flags.project, pm);
+    const tree = descendantProjectIds(pid, projects);
+    rows = rows.filter((t) => tree.has(t.projectId));
+  }
+  // --exclude-project: отсечь дерево проекта (например, SmartWay для «без рабочих задач»).
+  if (flags["exclude-project"]) {
+    const pm = { nameToId: new Map(projects.map((p) => [name(p), p.id])), idToName: projectIdToName };
+    const epid = resolveProject(flags["exclude-project"], pm);
+    const excludeTree = descendantProjectIds(epid, projects);
+    rows = rows.filter((t) => !excludeTree.has(t.projectId));
+  }
+  // --focus: задачи из проектов под полкой Focus (имя «Focus» ищется в дереве проектов).
+  if (flags.focus) {
+    const focusProject = projects.find((p) => name(p) === "Focus");
+    if (!focusProject) fail("проект Focus не найден (sing projects)");
+    const focusTree = descendantProjectIds(focusProject.id, projects);
+    rows = rows.filter((t) => focusTree.has(t.projectId));
+  }
   if (flags["no-reference"] || flags.active || flags.candidate || flags["next-action"]) {
     rows = rows.filter((t) => !refIds.has(t.projectId));
   }
@@ -483,7 +537,7 @@ async function cmdTasks(flags) {
 
   const fields = flags.fields ? flagList(flags.fields) : TASK_DEFAULT_FIELDS;
   const idToName = flags["tag-ids"] ? null : tm.idToName;
-  emit(rows.map((t) => projectTask(t, fields, idToName)), flags.format || "jsonl", fields);
+  emit(rows.map((t) => projectTask(t, fields, idToName, projectIdToName)), flags.format || "jsonl", fields);
 }
 
 async function cmdTask(positional, flags) {
@@ -492,8 +546,9 @@ async function cmdTask(positional, flags) {
   const c = client();
   const t = await c.getTask(id);
   if (flags.json) { process.stdout.write(JSON.stringify(t, null, 2) + "\n"); return; }
-  const tm = await tagMaps(c);
-  process.stdout.write(JSON.stringify(projectTask(t, [...TASK_DEFAULT_FIELDS, "note"], tm.idToName), null, 2) + "\n");
+  const [tm, projects] = await Promise.all([tagMaps(c), getProjects(c)]);
+  const projectIdToName = new Map(projects.map((p) => [p.id, name(p)]));
+  process.stdout.write(JSON.stringify(projectTask(t, [...TASK_DEFAULT_FIELDS, "note"], tm.idToName, projectIdToName), null, 2) + "\n");
 }
 
 async function cmdProjects(flags) {
@@ -856,12 +911,17 @@ function usage() {
   process.stdout.write(`sing — компактный CLI поверх Singularity API
 
 Чтение (в stdout только проекция нужных полей; --out FILE кладёт сырой дамп для jq):
-  sing tasks [--project ID] [--tag NAME] [--query TEXT] [--no-reference] [--active] [--candidate]
+  sing tasks [--project ID|имя] [--exclude-project ID|имя] [--focus] [--tag NAME] [--query TEXT]
+             [--no-reference] [--active] [--candidate]
              [--deferred true|false] [--inbox] [--due today|overdue] [--done|--all]
              [--format jsonl|tsv|count|json] [--fields a,b,c] [--tag-ids] [--out FILE]
+             # --project = задачи проекта И всех подпроектов (клиентская фильтрация по дереву)
+             # --exclude-project = ОТсечь дерево проекта (напр. SmartWay для «без рабочих задач»)
+             # --focus = задачи из проектов под полкой Focus (имя «Focus» ищется в дереве)
              # --inbox = истинные Входящие: без проекта И без даты (start/deferred) — канонная выборка на разбор
              # --due = срочность по локальному дню GMT+3: today (start/deadline в окне сегодня),
              #         overdue (start/deadline в прошлом). Можно вместе: --due today,overdue (фокус §8)
+             # поле project в выводе = ИМЯ проекта (не ID); для ID — --fields projectId
   sing task <id> [--json]
   sing projects [--format ...] [--out FILE]
   sing tags
@@ -946,6 +1006,6 @@ if (require.main === module) {
     parseArgs, flagList, KNOWN_FLAGS, unknownFlags, referenceProjectIds, referenceConfig,
     defaultGroupId, groupsByProject, needsGroupHeal, isInboxTask,
     reviewGuardReason, authFromArgs, findCodexSingularityArgs, taskMatchesQuery, checklistTitlesFromText,
-    taskUpdateRequest, isNotFound,
+    taskUpdateRequest, isNotFound, descendantProjectIds,
   };
 }

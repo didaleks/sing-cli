@@ -59,10 +59,28 @@ ok(h.isArchived({ deleteDate: "x" }) === true, "isArchived deleteDate");
 ok(h.isArchived({ complete: 1 }) === false, "isArchived complete без deleteDate → false");
 
 // --- resolveProject ---
-const pm = { nameToId: new Map([["Проект А", "P-aaaa0001"]]), idToName: new Map() };
+const pm = { nameToId: new Map([["Проект А", "P-aaaa0001"]]), idToName: new Map([["P-aaaa0001", "Проект А"]]) };
 eq(h.resolveProject("P-aaaa0001", pm), "P-aaaa0001", "resolveProject принимает P-id как есть");
 eq(h.resolveProject("Проект А", pm), "P-aaaa0001", "resolveProject имя→id");
 ok(h.resolveProjectSafe("Несуществующий", pm) === null, "resolveProjectSafe мусор → null");
+// Prefix-match для коротких ID (P-d2321f78 → P-d2321f78-78fe-4fcb-ad9b-937d6e121f4b).
+const pmFull = {
+  nameToId: new Map([["Финансы", "P-d2321f78-78fe-4fcb-ad9b-937d6e121f4b"]]),
+  idToName: new Map([
+    ["P-d2321f78-78fe-4fcb-ad9b-937d6e121f4b", "Финансы"],
+    ["P-d2321f78-aaaa-bbbb-cccc-dddddddddddd", "Другой"],
+  ]),
+};
+eq(h.resolveProjectSafe("P-d2321f78-78fe-4fcb-ad9b-937d6e121f4b", pmFull), "P-d2321f78-78fe-4fcb-ad9b-937d6e121f4b",
+  "resolveProjectSafe: полный ID — точное совпадение");
+ok(h.resolveProjectSafe("P-d2321f78", pmFull) === null,
+  "resolveProjectSafe: неоднозначный префикс (2 совпадения) → null");
+const pmUnique = {
+  nameToId: new Map([["Финансы", "P-d2321f78-78fe-4fcb-ad9b-937d6e121f4b"]]),
+  idToName: new Map([["P-d2321f78-78fe-4fcb-ad9b-937d6e121f4b", "Финансы"]]),
+};
+eq(h.resolveProjectSafe("P-d2321f78", pmUnique), "P-d2321f78-78fe-4fcb-ad9b-937d6e121f4b",
+  "resolveProjectSafe: короткий ID с уникальным префиксом → полный ID");
 
 // --- referenceProjectIds (настраиваемый reference-конфиг) ---
 const projs = [{ id: "P-sphere" }, { id: "P-child", parent: "P-sphere" }, { id: "P-other" }];
@@ -136,6 +154,7 @@ ok(dcBoth.has("overdue") && dcBoth.has("today"), "dueClasses: overdue start + to
 
 // --- unknownFlags (ошибка на неизвестный флаг) ---
 eq(h.unknownFlags("tasks", { due: "today", project: "P-x", query: "Bybit" }), [], "unknownFlags: валидные флаги tasks → пусто");
+eq(h.unknownFlags("tasks", { "exclude-project": "P-x", focus: true }), [], "unknownFlags: --exclude-project и --focus валидны для tasks");
 eq(h.unknownFlags("tasks", { today: true }), ["today"], "unknownFlags: --today не флаг tasks → ошибка");
 eq(h.unknownFlags("bucket", { today: true }), [], "unknownFlags: --today валиден для bucket");
 eq(h.unknownFlags("bucket", { tomorrow: true }), [], "unknownFlags: --tomorrow валиден для bucket");
@@ -155,6 +174,35 @@ eq(h.taskUpdateRequest({ id: "T-123", title: "Новый заголовок", st
   "taskUpdateRequest: id остаётся в URL и не попадает в PATCH-тело");
 ok(h.isNotFound({ response: { status: 404 } }), "isNotFound: HTTP 404");
 ok(!h.isNotFound({ response: { status: 400 } }), "isNotFound: прочая ошибка");
+
+// --- descendantProjectIds (дерево проекта: сам + все потомки по parent-связям) ---
+const treeProjects = [
+  { id: "P-root", parent: "" },
+  { id: "P-child1", parent: "P-root" },
+  { id: "P-child2", parent: "P-root" },
+  { id: "P-grandchild", parent: "P-child1" },
+  { id: "P-other", parent: "" },
+  { id: "P-other-child", parent: "P-other" },
+];
+const treeRoot = h.descendantProjectIds("P-root", treeProjects);
+ok(treeRoot.has("P-root") && treeRoot.has("P-child1") && treeRoot.has("P-child2") && treeRoot.has("P-grandchild"),
+  "descendantProjectIds: корень включает себя, детей и внуков");
+ok(!treeRoot.has("P-other") && !treeRoot.has("P-other-child"),
+  "descendantProjectIds: чужое дерево не включается");
+const treeLeaf = h.descendantProjectIds("P-grandchild", treeProjects);
+ok(treeLeaf.size === 1 && treeLeaf.has("P-grandchild"),
+  "descendantProjectIds: листовой проект — только себя");
+const treeMid = h.descendantProjectIds("P-child1", treeProjects);
+ok(treeMid.has("P-child1") && treeMid.has("P-grandchild") && !treeMid.has("P-root") && !treeMid.has("P-child2"),
+  "descendantProjectIds: средний узел — себя и потомков, без родителя и сиблингов");
+// Циклическая защита: даже если parent-связи зациклены, не зависаем.
+const cyclicProjects = [
+  { id: "P-a", parent: "P-b" },
+  { id: "P-b", parent: "P-a" },
+];
+const cyclicTree = h.descendantProjectIds("P-a", cyclicProjects);
+ok(cyclicTree.has("P-a") && cyclicTree.has("P-b") && cyclicTree.size === 2,
+  "descendantProjectIds: цикл в parent-связях не вызывает зависание");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
