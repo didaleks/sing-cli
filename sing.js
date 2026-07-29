@@ -143,6 +143,18 @@ async function updateTask(c, task) {
   return response.data;
 }
 
+function checklistItemUpdateRequest(item) {
+  if (!item || !item.id) throw new Error("для обновления пункта чек-листа нужен id");
+  const { id, ...data } = item;
+  return { id, data };
+}
+
+async function updateChecklistItem(c, item) {
+  const { id, data } = checklistItemUpdateRequest(item);
+  const response = await c.client.patch(`/v2/checklist-item/${id}`, data, c.createRequestConfig());
+  return response.data;
+}
+
 function isNotFound(err) {
   return Boolean(err && err.response && err.response.status === 404);
 }
@@ -851,7 +863,7 @@ async function cmdChecklist(positional, flags) {
       const created = await c.createChecklistItem({ parent: id, title: titles[i] });
       item = created.checklistItem || created;
     }
-    await c.updateChecklistItem({ id: item.id, parentOrder: (i + 1) * 100 });
+    await updateChecklistItem(c, { id: item.id, parentOrder: (i + 1) * 100 });
   }
   for (const item of available) await c.deleteChecklistItem(item.id);
   const after = await list();
@@ -1006,6 +1018,6 @@ if (require.main === module) {
     parseArgs, flagList, KNOWN_FLAGS, unknownFlags, referenceProjectIds, referenceConfig,
     defaultGroupId, groupsByProject, needsGroupHeal, isInboxTask,
     reviewGuardReason, authFromArgs, findCodexSingularityArgs, taskMatchesQuery, checklistTitlesFromText,
-    taskUpdateRequest, isNotFound, descendantProjectIds,
+    taskUpdateRequest, checklistItemUpdateRequest, isNotFound, descendantProjectIds,
   };
 }

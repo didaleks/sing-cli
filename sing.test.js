@@ -172,6 +172,9 @@ ok(ap.deleteDate && ap.complete === undefined, "ARCHIVE_PATCH только delet
 eq(h.taskUpdateRequest({ id: "T-123", title: "Новый заголовок", start: null }),
   { id: "T-123", data: { title: "Новый заголовок", start: null } },
   "taskUpdateRequest: id остаётся в URL и не попадает в PATCH-тело");
+eq(h.checklistItemUpdateRequest({ id: "CH-123", title: "Новый шаг", parentOrder: 100 }),
+  { id: "CH-123", data: { title: "Новый шаг", parentOrder: 100 } },
+  "checklistItemUpdateRequest: id остаётся в URL и не попадает в PATCH-тело");
 ok(h.isNotFound({ response: { status: 404 } }), "isNotFound: HTTP 404");
 ok(!h.isNotFound({ response: { status: 400 } }), "isNotFound: прочая ошибка");
 

@@ -118,8 +118,9 @@ node ./sing.js <cmd>              # напрямую
   404, поэтому CLI проверяет результат через `listTasks({includeRemoved:true})`.
   `archive` шлёт только `deleteDate` (без `complete`). Поля `archived`/`removed` API **молча
   игнорирует** — не использовать. Снятие `start` — значением `null`.
-- **Обновление задачи:** `id` передаётся только в URL `/v2/task/:id`; текущий API отклоняет `id` и
-  `completeLast` в JSON-теле PATCH с HTTP 400.
+- **Обновление задачи и пункта чек-листа:** `id` передаётся только в URL
+  `/v2/task/:id` или `/v2/checklist-item/:id`; текущий API отклоняет `id` в JSON-теле PATCH
+  с HTTP 400. Для задачи API также отклоняет `completeLast`.
 - **Скрытие выполненных:** `complete:1` сам по себе НЕ убирает задачу из дефолтного `listTasks` API
   (известный баг) — CLI фильтрует на своей стороне; `--done`/`--all` поднимают
   `includeRemoved`/`includeArchived`, чтобы показать архив.
