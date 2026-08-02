@@ -283,6 +283,7 @@ const KNOWN_FLAGS = {
   archive: [],
   checklist: ["add", "list", "delete", "replace-file"],
   deadline: ["date"],
+  start: ["date"],
   "project-rename": [],
   "project-create": ["title", "parent"],
   "project-move": ["parent"],
@@ -887,6 +888,21 @@ async function cmdDeadline(positional, flags) {
   process.stdout.write(`deadline ${id} "${name(after) || ""}": ${before.deadline || "—"} → ${after.deadline}\n`);
 }
 
+// start — проставить дату старта (GMT+3), снимает deferred. Батч.
+async function cmdStart(positional, flags) {
+  const iso = dateToGMT3Iso(flags.date);
+  if (!iso) fail("usage: sing start <id...> --date YYYY-MM-DD");
+  const c = client();
+  const ids = resolveIds(positional);
+  await runBatch(ids, async (id) => {
+    const before = await c.getTask(id);
+    await updateTask(c, { id, start: iso, deferred: false });
+    const after = await c.getTask(id);
+    const fmt = (t) => `start=${t.start || "—"} deferred=${Boolean(t.deferred)}`;
+    process.stdout.write(`start ${id} "${name(after) || ""}": ${fmt(before)} → ${fmt(after)}\n`);
+  });
+}
+
 // project-rename — переписать имя проекта (по P-id или текущему имени). rename меняет имя, не ID.
 async function cmdProjectRename(positional) {
   const ref = positional[0];
@@ -974,6 +990,7 @@ function usage() {
   sing archive <id...>                          # убрать из активных без «выполнено» (разбор stale)
   sing checklist <id> --add "шаг"|--list|--delete ITEM_ID|--replace-file FILE
   sing deadline <id> --date YYYY-MM-DD          # дедлайн (GMT+3)
+  sing start <id...> --date YYYY-MM-DD          # дата старта (GMT+3), снимает deferred; батч
   sing project-rename <id|имя> "новое имя"      # переименовать проект (меняет имя, не ID)
   sing project-create --title '...' [--parent ID|имя]  # создать проект (опц. под родителем)
   sing project-move <id|имя> --parent ID|имя   # сменить родителя проекта (reparent)
@@ -1019,6 +1036,7 @@ async function main() {
     case "archive": return cmdArchive(positional);
     case "checklist": return cmdChecklist(positional, flags);
     case "deadline": return cmdDeadline(positional, flags);
+    case "start": return cmdStart(positional, flags);
     case "project-rename": return cmdProjectRename(positional);
     case "project-create": return cmdProjectCreate(flags);
     case "project-move": return cmdProjectMove(positional, flags);

@@ -103,10 +103,11 @@ node ./sing.js <cmd>              # напрямую
 | `sing checklist <id> --delete ITEM_ID` | Удалить пункт с проверкой, что он принадлежит задаче |
 | `sing checklist <id> --replace-file FILE` | Идемпотентно синхронизировать чек-лист со строками файла; безопасно для `$`, кавычек и другого shell-текста |
 | `sing deadline <id> --date YYYY-MM-DD` | Дедлайн |
+| `sing start <id...> --date YYYY-MM-DD` | Дата старта (GMT+3), снимает `deferred`; батч |
 | `sing project-rename <id\|имя> "новое имя"` | Переименовать проект (меняет имя, не ID) |
 | `sing project-create --title '...' [--parent ID\|имя]` | Создать проект (опц. под родителем) |
 
-Батч (`done`/`move`/`bucket`/`archive`): id — аргументами **или** через stdin (whitespace/newline);
+Батч (`done`/`move`/`bucket`/`archive`/`start`): id — аргументами **или** через stdin (whitespace/newline);
 частичный сбой не прерывает остальные, в конце печатается `итого: ok=N fail=N`.
 
 ## Правила API (канон)
