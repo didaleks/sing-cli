@@ -194,7 +194,8 @@ class ApiClient {
      * @returns Updated project
      */
     async updateProject(project) {
-        const response = await this.client.patch(`/v2/project/${project.id}`, project, this.createRequestConfig());
+        const { id, ...body } = project;
+        const response = await this.client.patch(`/v2/project/${id}`, body, this.createRequestConfig());
         return response.data;
     }
     /**

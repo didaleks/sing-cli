@@ -285,6 +285,7 @@ const KNOWN_FLAGS = {
   deadline: ["date"],
   "project-rename": [],
   "project-create": ["title", "parent"],
+  "project-move": ["parent"],
 };
 // Неизвестные флаги для команды (пустой массив = всё ок). Неизвестная команда → пусто (валидируется
 // отдельно диспетчером); help/undefined тоже не валидируются.
@@ -919,6 +920,28 @@ async function cmdProjectCreate(flags) {
   process.stdout.write(line + "\n");
 }
 
+// project-move — сменить родителя проекта (reparent). С верификацией-эхом.
+async function cmdProjectMove(positional, flags) {
+  const ref = positional[0];
+  if (!ref || !flags.parent || flags.parent === true) fail("usage: sing project-move <id|имя> --parent ID|имя");
+  const c = client();
+  const pm = await projectMaps(c);
+  const id = resolveProject(ref, pm);
+  const newParent = resolveProject(flags.parent, pm);
+  const proj = pm.projects.find((p) => p.id === id);
+  const before = pm.idToName.get(id) || id;
+  const oldParentName = proj && proj.parent ? (pm.idToName.get(proj.parent) || proj.parent) : "(корень)";
+  try {
+    await c.updateProject({ id, parent: newParent });
+  } catch (e) {
+    const body = e.response && e.response.data ? JSON.stringify(e.response.data) : e.message;
+    fail(`project-move: HTTP ${e.response ? e.response.status : "?"} — ${body}`);
+  }
+  const after = await c.getProject(id);
+  const newParentName = pm.idToName.get(newParent) || newParent;
+  process.stdout.write(`project-move ${id} "${before}"\n  было:  parent=${oldParentName}\n  стало: parent=${newParentName}\n`);
+}
+
 function usage() {
   process.stdout.write(`sing — компактный CLI поверх Singularity API
 
@@ -953,6 +976,7 @@ function usage() {
   sing deadline <id> --date YYYY-MM-DD          # дедлайн (GMT+3)
   sing project-rename <id|имя> "новое имя"      # переименовать проект (меняет имя, не ID)
   sing project-create --title '...' [--parent ID|имя]  # создать проект (опц. под родителем)
+  sing project-move <id|имя> --parent ID|имя   # сменить родителя проекта (reparent)
 
 Батч: id для done/move/bucket/archive — аргументами ИЛИ через stdin (whitespace/newline);
 частичный сбой не прерывает остальные. По умолчанию tasks/metrics скрывают выполненные/архивные
@@ -997,6 +1021,7 @@ async function main() {
     case "deadline": return cmdDeadline(positional, flags);
     case "project-rename": return cmdProjectRename(positional);
     case "project-create": return cmdProjectCreate(flags);
+    case "project-move": return cmdProjectMove(positional, flags);
     case undefined:
     case "help":
     case "--help":
