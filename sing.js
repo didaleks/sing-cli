@@ -606,10 +606,6 @@ async function cmdMetrics(flags) {
   const m = {
     total, reference, deferred, activeLoad, inbox,
     review, research, decompose,
-    backpressure: {
-      // Лимит стока review снят 2026-07-11 — число на ревью остаётся видимой метрикой, но не блокирует подхват.
-      researchInput: research > 10 ? "ALERT >10: затор на входе" : "ok",
-    },
   };
   if (flags.format === "json" || flags.json) { process.stdout.write(JSON.stringify(m, null, 2) + "\n"); return; }
   process.stdout.write(
@@ -619,7 +615,7 @@ async function cmdMetrics(flags) {
     `Активная нагрузка: ${activeLoad}  (Всего − Reference − Deferred)\n` +
     `Входящие:         ${inbox}\n` +
     `На ревью (review): ${review}\n` +
-    `research-очередь:  ${research}   ${m.backpressure.researchInput}\n` +
+    `research-очередь:  ${research}\n` +
     `decompose:        ${decompose}\n`
   );
 }
@@ -976,7 +972,7 @@ function usage() {
   sing task <id> [--json]
   sing projects [--format ...] [--out FILE]
   sing tags
-  sing metrics [--json] [--done|--all]   # total/reference/deferred/active + backpressure review/research
+  sing metrics [--json] [--done|--all]   # total/reference/deferred/active + review/research queues
 
 Запись (каждая делает верификацию-эхо перечиткой, не вываливает полный объект):
   sing tag-swap <id> --add NAME --remove NAME   # атомарный свап + верификация

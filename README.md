@@ -45,7 +45,7 @@ export SINGULARITY_BASE_URL=https://api.singularity-app.com   # опц., это 
 ./sing tasks --format count        # сколько активных задач
 ./sing tasks --candidate           # компактный список кандидатов «что делать»
 ./sing tasks --query "Bybit"        # найти задачи по фрагменту заголовка
-./sing metrics                     # метрики нагрузки + backpressure
+./sing metrics                     # метрики нагрузки + очереди review/research
 ./sing done T-123 T-456            # закрыть пачкой (с верификацией)
 ./sing bucket T-123 --tomorrow      # поставить задачу на завтра в GMT+3
 ./sing checklist T-123 --replace-file steps.txt  # безопасно синхронизировать чек-лист

@@ -55,7 +55,7 @@ node ./sing.js <cmd>              # напрямую
 | `sing task <id> [--json]` | Одна задача (полный объект — `--json`) |
 | `sing projects [--format ...] [--out FILE]` | Проекты (порядок/иерархия) |
 | `sing tags` | Теги |
-| `sing metrics [--json] [--done\|--all]` | Метрики нагрузки + backpressure (review/research) |
+| `sing metrics [--json] [--done\|--all]` | Метрики нагрузки + очереди review/research |
 
 Фильтры: `--active` = не reference и не deferred; `--candidate` = active без тегов `Waiting`/`Мозгоштурм`.
 **`--project`** = задачи проекта **И всех подпроектов** (клиентская фильтрация по дереву `projectId`;
