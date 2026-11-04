@@ -91,7 +91,7 @@ node ./sing.js <cmd>              # напрямую
 |---|---|
 | `sing tag-swap <id> --add NAME --remove NAME [--force]` | Атомарный свап тегов + верификация. **Guard §12:** `--add review` при пустом `note` блокируется (бриф не потеряется) — сначала `sing note`, либо `--force` |
 | `sing note <id> (--html '…' \| --file PATH)` | Записать заметку / DECISION-BRIEF |
-| `sing create --title '…' [--project ID] [--tags A,B] [--note '…']` | Создать задачу |
+| `sing create --title '…' [--project ID] [--tags A,B] [--note '…'] [--date YYYY-MM-DD] [--time HH:MM] [--notify 0]` | Создать задачу |
 | `sing done <id…>` | Закрыть + убрать из активных (`complete`+`deleteDate`); батч; идемпотентно |
 | `sing rename <id> "новое название"` | Переписать заголовок |
 | `sing move <id…> --project ID\|имя [--section NAME]` | Сменить проект (+ привязка к секции); батч |
@@ -103,12 +103,26 @@ node ./sing.js <cmd>              # напрямую
 | `sing checklist <id> --delete ITEM_ID` | Удалить пункт с проверкой, что он принадлежит задаче |
 | `sing checklist <id> --replace-file FILE` | Идемпотентно синхронизировать чек-лист со строками файла; безопасно для `$`, кавычек и другого shell-текста |
 | `sing deadline <id> --date YYYY-MM-DD` | Дедлайн |
-| `sing start <id...> --date YYYY-MM-DD` | Дата старта (GMT+3), снимает `deferred`; батч |
+| `sing start <id...> --date YYYY-MM-DD [--time HH:MM] [--notify 0]` | Дата старта (GMT+3), снимает `deferred`; батч |
 | `sing project-rename <id\|имя> "новое имя"` | Переименовать проект (меняет имя, не ID) |
 | `sing project-create --title '...' [--parent ID\|имя]` | Создать проект (опц. под родителем) |
 
 Батч (`done`/`move`/`bucket`/`archive`/`start`): id — аргументами **или** через stdin (whitespace/newline);
 частичный сбой не прерывает остальные, в конце печатается `итого: ok=N fail=N`.
+
+Для личного напоминания с точным временем:
+
+```sh
+sing create --title 'Сделать сброс в Codex' --date 2026-11-06 --time 20:00 --notify 0
+sing start T-… --date 2026-11-06 --time 20:00 --notify 60,15,0
+```
+
+`--time` — время GMT+3, требует `--date`. `--notify` — целые неотрицательные минуты до начала;
+`0` — в момент начала. Требует `--time`; минуты сортируются по убыванию, дубли убираются.
+Без `--notify` существующие уведомления сохраняются. `start` сохраняет `deadline`.
+После записи расписание проверяется перечиткой; если API не сохранил поле, команда завершается
+с ошибкой. `create` печатает ID до перечитки: при ошибке проверки сначала проверь эту задачу,
+не создавай дубликат.
 
 ## Правила API (канон)
 
@@ -119,6 +133,10 @@ node ./sing.js <cmd>              # напрямую
   404, поэтому CLI проверяет результат через `listTasks({includeRemoved:true})`.
   `archive` шлёт только `deleteDate` (без `complete`). Поля `archived`/`removed` API **молча
   игнорирует** — не использовать. Снятие `start` — значением `null`.
+- **Напоминания:** точное время задаётся `start` + `useTime:true`, уведомления — массивом
+  `notifies` (минуты по убыванию, `[0]` — в момент начала). Поле `notify` API отклоняет
+  и при создании, и при PATCH; не передавать его. `alarmNotify` — отдельный режим звукового
+  оповещения; CLI его не меняет.
 - **Обновление задачи и пункта чек-листа:** `id` передаётся только в URL
   `/v2/task/:id` или `/v2/checklist-item/:id`; текущий API отклоняет `id` в JSON-теле PATCH
   с HTTP 400. Для задачи API также отклоняет `completeLast`.
@@ -163,6 +181,7 @@ node ./sing.js <cmd>              # напрямую
 - `node_modules/` и `tmp/` — в `.gitignore`, не коммитятся.
 - Reference-проекты задаются через env (`SINGULARITY_REFERENCE_SPHERE` /
   `SINGULARITY_REFERENCE_PROJECTS`) — в коде нет захардкоженных ID конкретного аккаунта.
-- Тесты: `npm test` (или `node sing.test.js`) — чистые хелперы (даты/предикаты/resolveProject/
-  referenceProjectIds), без сети. Требуют установленного axios (`sing.js` тянет `client.js` на верхнем
-  уровне).
+- Тесты: `npm test` — чистые хелперы и команды напоминаний через локальный HTTP-сервер
+  (`sing.schedule.test.js`), без обращений к Singularity. `node sing.test.js` — только чистые
+  хелперы (даты/предикаты/resolveProject/referenceProjectIds), без сети. Требуют установленного
+  axios (`sing.js` тянет `client.js` на верхнем уровне).

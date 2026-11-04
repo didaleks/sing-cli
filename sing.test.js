@@ -42,6 +42,33 @@ ok(/^\d{4}-\d{2}-\d{2}T21:00:00\.000Z$/.test(h.todayGMT3Iso()), "todayGMT3Iso ф
 ok(h.dateToGMT3Iso("плохая дата") === null, "dateToGMT3Iso невалидный формат → null");
 eq(h.tomorrowGMT3Iso("2026-07-15T21:00:00.000Z"), "2026-07-16T21:00:00.000Z", "tomorrowGMT3Iso +1 локальный день");
 
+// --- точное время и напоминания ---
+eq(h.taskSchedule({}), {}, "taskSchedule: без параметров не меняет расписание");
+eq(h.taskSchedule({ date: "2026-11-06", time: "20:00", notify: "0,60,15,15" }),
+  { start: "2026-11-06T17:00:00.000Z", deferred: false, useTime: true, notifies: [60, 15, 0] },
+  "taskSchedule: московское время и минуты уведомлений, без запрещённого notify");
+eq(h.taskSchedule({ date: "2026-01-01", time: "00:10" }),
+  { start: "2025-12-31T21:10:00.000Z", deferred: false, useTime: true },
+  "taskSchedule: переход года, существующие уведомления не меняются");
+eq(h.taskSchedule({ date: "2026-11-06" }),
+  { start: "2026-11-05T21:00:00.000Z", deferred: false },
+  "taskSchedule: прежнее поведение даты без времени");
+for (const flags of [
+  { time: "20:00" }, { date: true }, { date: "2026-02-30" },
+  { date: "2026-11-06", time: "24:00" }, { date: "2026-11-06", time: true },
+  { date: "2026-11-06", notify: "0" },
+  ...[true, "", "-1", "1.5", "0,,15", "oops"].map((notify) =>
+    ({ date: "2026-11-06", time: "20:00", notify })),
+]) {
+  let rejected = false;
+  try { h.taskSchedule(flags); } catch (_) { rejected = true; }
+  ok(rejected, `taskSchedule: отклоняет ${JSON.stringify(flags)}`);
+}
+eq(h.unknownFlags("create", { date: "2026-11-06", time: "20:00", notify: "0" }), [],
+  "create: разрешены дата, время и уведомления");
+eq(h.unknownFlags("start", { date: "2026-11-06", time: "20:00", notify: "0" }), [],
+  "start: разрешены дата, время и уведомления");
+
 // --- поиск и безопасный текст чек-листа ---
 ok(h.taskMatchesQuery({ title: "Сравнить Bybit и IDpay" }, "bybit"), "taskMatchesQuery: регистронезависимый поиск");
 ok(!h.taskMatchesQuery({ title: "Купить USD" }, "AMD"), "taskMatchesQuery: несовпадающий заголовок");

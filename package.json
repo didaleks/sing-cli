@@ -7,7 +7,7 @@
     "sing": "./sing.js"
   },
   "scripts": {
-    "test": "node sing.test.js"
+    "test": "node sing.test.js && node sing.schedule.test.js"
   },
   "dependencies": {
     "axios": "1.10.0"

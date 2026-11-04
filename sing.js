@@ -274,7 +274,7 @@ const KNOWN_FLAGS = {
   metrics: ["json", "done", "all"],
   "tag-swap": ["add", "remove", "force"],
   note: ["html", "file"],
-  create: ["title", "project", "tags", "note"],
+  create: ["title", "project", "tags", "note", "date", "time", "notify"],
   done: [],
   rename: [],
   move: ["project", "section"],
@@ -283,7 +283,7 @@ const KNOWN_FLAGS = {
   archive: [],
   checklist: ["add", "list", "delete", "replace-file"],
   deadline: ["date"],
-  start: ["date"],
+  start: ["date", "time", "notify"],
   "project-rename": [],
   "project-create": ["title", "parent"],
   "project-move": ["parent"],
@@ -324,6 +324,39 @@ function dateToGMT3Iso(yyyymmdd) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(yyyymmdd))) return null;
   const d = new Date(`${yyyymmdd}T00:00:00+03:00`);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+function taskSchedule(flags) {
+  if (flags.date == null && flags.time == null && flags.notify == null) return {};
+  const start = dateToGMT3Iso(flags.date);
+  if (!start || new Date(new Date(start).getTime() + 10800000).toISOString().slice(0, 10) !== flags.date) {
+    throw new Error("нужен --date с существующей датой YYYY-MM-DD");
+  }
+  const schedule = { start, deferred: false };
+  if (flags.time != null) {
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(flags.time))) {
+      throw new Error("нужен --time HH:MM (GMT+3)");
+    }
+    schedule.start = new Date(`${flags.date}T${flags.time}:00+03:00`).toISOString();
+    schedule.useTime = true;
+  }
+  if (flags.notify != null) {
+    if (flags.time == null || !/^\d+(\s*,\s*\d+)*$/.test(String(flags.notify))) {
+      throw new Error("--notify требует --time и минуты до начала через запятую (0 = в момент начала)");
+    }
+    const minutes = String(flags.notify).split(",").map(Number);
+    if (!minutes.every(Number.isSafeInteger)) throw new Error("--notify: слишком большое число минут");
+    schedule.notifies = [...new Set(minutes)].sort((a, b) => b - a);
+  }
+  return schedule;
+}
+
+function verifySchedule(task, schedule) {
+  for (const [key, value] of Object.entries(schedule)) {
+    if (JSON.stringify(task[key]) !== JSON.stringify(value)) {
+      throw new Error(`задача ${task.id}: API не сохранил ${key}`);
+    }
+  }
 }
 // Сегодня в GMT+3 — через Intl (не зависит от TZ машины/CI, без багов на границе суток).
 function todayGMT3Iso() {
@@ -666,8 +699,9 @@ async function cmdNote(positional, flags) {
 
 async function cmdCreate(flags) {
   if (!flags.title || flags.title === true) fail("usage: sing create --title '...' [--project ID] [--tags A,B] [--note '...']");
+  const schedule = taskSchedule(flags);
   const c = client();
-  const task = { title: String(flags.title) };
+  const task = { title: String(flags.title), ...schedule };
   if (flags.project && flags.project !== true) {
     const pm = await projectMaps(c);
     task.projectId = resolveProject(flags.project, pm); // принимает P-id ИЛИ имя (fail-fast, как move)
@@ -683,6 +717,12 @@ async function cmdCreate(flags) {
   const resp = await c.createTask(task);
   const created = resp && resp.task ? resp.task : resp;
   process.stdout.write(`создана задача ${created.id || "(id?)"}: ${name(created) || task.title}\n`);
+  if (!created.id) throw new Error("API не вернул id созданной задачи");
+  const after = await c.getTask(created.id);
+  verifySchedule(after, schedule);
+  if (Object.keys(schedule).length) {
+    process.stdout.write(`  start=${after.start} useTime=${Boolean(after.useTime)} notifies=${JSON.stringify(after.notifies || [])}\n`);
+  }
 }
 
 // done = закрыть + убрать из активных (батч; id из аргументов или stdin). Идемпотентно.
@@ -886,15 +926,16 @@ async function cmdDeadline(positional, flags) {
 
 // start — проставить дату старта (GMT+3), снимает deferred. Батч.
 async function cmdStart(positional, flags) {
-  const iso = dateToGMT3Iso(flags.date);
-  if (!iso) fail("usage: sing start <id...> --date YYYY-MM-DD");
+  if (flags.date == null) fail("usage: sing start <id...> --date YYYY-MM-DD [--time HH:MM] [--notify 0]");
+  const schedule = taskSchedule(flags);
   const c = client();
   const ids = resolveIds(positional);
   await runBatch(ids, async (id) => {
     const before = await c.getTask(id);
-    await updateTask(c, { id, start: iso, deferred: false });
+    await updateTask(c, { id, ...schedule });
     const after = await c.getTask(id);
-    const fmt = (t) => `start=${t.start || "—"} deferred=${Boolean(t.deferred)}`;
+    verifySchedule(after, schedule);
+    const fmt = (t) => `start=${t.start || "—"} deferred=${Boolean(t.deferred)} useTime=${Boolean(t.useTime)} notifies=${JSON.stringify(t.notifies || [])}`;
     process.stdout.write(`start ${id} "${name(after) || ""}": ${fmt(before)} → ${fmt(after)}\n`);
   });
 }
@@ -978,6 +1019,7 @@ function usage() {
   sing tag-swap <id> --add NAME --remove NAME   # атомарный свап + верификация
   sing note <id> (--html '...' | --file PATH)   # DECISION-BRIEF в заметку
   sing create --title '...' [--project ID] [--tags A,B] [--note '...']
+              [--date YYYY-MM-DD [--time HH:MM [--notify 0|60,15,0]]]
   sing done <id...>                             # закрыть + убрать из активных (complete+deleteDate); идемпотентно
   sing rename <id> "новое название"             # переписать заголовок (монки-формат)
   sing move <id...> --project ID|имя [--section NAME]  # сменить проект (+ привязать к секции; дефолт — не осиротить)
@@ -986,7 +1028,8 @@ function usage() {
   sing archive <id...>                          # убрать из активных без «выполнено» (разбор stale)
   sing checklist <id> --add "шаг"|--list|--delete ITEM_ID|--replace-file FILE
   sing deadline <id> --date YYYY-MM-DD          # дедлайн (GMT+3)
-  sing start <id...> --date YYYY-MM-DD          # дата старта (GMT+3), снимает deferred; батч
+  sing start <id...> --date YYYY-MM-DD [--time HH:MM] [--notify 0|60,15,0]
+                                              # GMT+3; notify = минуты до начала, 0 = в момент начала
   sing project-rename <id|имя> "новое имя"      # переименовать проект (меняет имя, не ID)
   sing project-create --title '...' [--parent ID|имя]  # создать проект (опц. под родителем)
   sing project-move <id|имя> --parent ID|имя   # сменить родителя проекта (reparent)
@@ -1057,6 +1100,6 @@ if (require.main === module) {
     parseArgs, flagList, KNOWN_FLAGS, unknownFlags, referenceProjectIds, referenceConfig,
     defaultGroupId, groupsByProject, needsGroupHeal, isInboxTask,
     reviewGuardReason, authFromArgs, findCodexSingularityArgs, taskMatchesQuery, checklistTitlesFromText,
-    taskUpdateRequest, checklistItemUpdateRequest, isNotFound, descendantProjectIds,
+    taskUpdateRequest, checklistItemUpdateRequest, isNotFound, descendantProjectIds, taskSchedule,
   };
 }

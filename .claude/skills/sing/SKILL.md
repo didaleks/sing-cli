@@ -55,6 +55,8 @@ sing deadline <id> --date YYYY-MM-DD
 sing tag-swap <id> --add NAME --remove NAME
 sing note <id> --html '<p>…</p>'           # заметка (HTML → Delta автоматически)
 sing create --title '…' [--project P-…] [--tags A,B]
+sing create --title '…' --date YYYY-MM-DD --time HH:MM --notify 0
+sing start <id…> --date YYYY-MM-DD [--time HH:MM] [--notify 60,15,0]
 sing archive <id…>                         # убрать без отметки «выполнено» (stale)
 sing checklist <id> --list                 # компактный список пунктов и их ID
 sing checklist <id> --delete ITEM_ID       # удалить конкретный пункт
@@ -75,6 +77,8 @@ sing tasks --project P-old --format tsv --fields id | tail -n +2 | sing move --p
 - Reference-проекты (если используются) настраиваются через env
   `SINGULARITY_REFERENCE_SPHERE` / `SINGULARITY_REFERENCE_PROJECTS`; без настройки фильтр reference
   никого не отсеивает.
+- Напоминания: `--time HH:MM` требует дату; `--notify` — минуты до начала (`0` — в момент начала),
+  требует точное время. CLI отправляет `notifies`, не запрещённое API поле `notify`.
 - Даты — в часовом поясе GMT+3 (CLI пересчитывает сам; передавай `--date YYYY-MM-DD`).
 
 ## Когда всё-таки MCP

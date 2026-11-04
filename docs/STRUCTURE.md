@@ -16,6 +16,7 @@
 | `sing` | Bash-launcher: находит `sing.js` рядом и `exec node sing.js "$@"`. | да |
 | `sing.js` | Вся логика CLI: auth, парсинг argv, хелперы, обработчики команд, dispatch. | да |
 | `sing.test.js` | Юнит-тесты чистых хелперов (даты/предикаты/resolveProject), без сети. | да |
+| `sing.schedule.test.js` | Проверка команд напоминаний через локальный HTTP-сервер, без Singularity. | да |
 | `client.js` | `ApiClient` — HTTP-обёртка над Singularity API. **Копия** из MCP-пакета. | ❌ перекопировать |
 | `utils/auth.js` | `createAuthHeader(token)` → `{ Authorization: Bearer … }`. **Копия** из MCP-пакета. | ❌ перекопировать |
 | `package.json` | `bin.sing → ./sing.js`, единственная зависимость `axios@1.10.0`, `engines.node ≥ 18`. | да |
@@ -65,7 +66,7 @@
 | `metrics` | `cmdMetrics` | `listTasks`, `listProjects`, `listTags` |
 | `tag-swap` | `cmdTagSwap` | `listTags`, `getTask`, `updateTask`, `getTask` (верификация) |
 | `note` | `cmdNote` | `updateTask` |
-| `create` | `cmdCreate` | `listTags` (если `--tags`), `createTask` |
+| `create` | `cmdCreate` | `listTags` (если `--tags`), `createTask`, `getTask` (проверка расписания) |
 | `done` | `cmdDone` | `getTask`, локальный PATCH без `id` в теле, `listTasks(includeRemoved)` (верификация); батч |
 | `rename` | `cmdRename` | `getTask`, `updateTask`, `getTask` |
 | `move` | `cmdMove` | `listProjects`, `getTask`, `updateTask`, `getTask`; батч |
@@ -73,6 +74,7 @@
 | `archive` | `cmdArchive` | `getTask`, локальный PATCH без `id` в теле, `listTasks(includeRemoved)`; батч |
 | `checklist` | `cmdChecklist` | `createChecklistItem`, `listChecklistItems` |
 | `deadline` | `cmdDeadline` | `getTask`, `updateTask`, `getTask` |
+| `start` | `cmdStart` | `getTask`, `updateTask`, `getTask` (проверка даты, времени и уведомлений) |
 | `project-rename` | `cmdProjectRename` | `listProjects`, `updateProject`, `getProject` |
 | `project-create` | `cmdProjectCreate` | `createProject`, `getProject` (+ `listProjects` если `--parent`) |
 
